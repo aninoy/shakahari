@@ -9,20 +9,17 @@ from google.genai import types
 from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
+MODEL_ID = "gemini-2.5-flash" 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 SHEET_CREDENTIALS = os.environ["G_SHEET_CREDENTIALS"]
-LATITUDE = 34.05 
+LATITUDE = 34.05
 LONGITUDE = -118.25
-MODEL_NAME= 'gemini-2.5-flash'
 
-# --- SETUP CLIENT ---
-# We use the specific stable version 'gemini-1.5-flash-002' to avoid 404 errors
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_weather():
-    """Fetches past 3 days and today's forecast."""
     url = f"https://api.open-meteo.com/v1/forecast?latitude={LATITUDE}&longitude={LONGITUDE}&daily=temperature_2m_max,precipitation_sum&past_days=3&forecast_days=1&timezone=auto"
     try:
         response = requests.get(url).json()
@@ -32,108 +29,148 @@ def get_weather():
         return None
 
 def send_telegram_alert(message):
-    """Sends a push notification to your phone."""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     requests.post(url, json=payload)
 
-def main():
-    print("🌿 Starting Plant Agent...")
+def process_mailbox(sheet, df):
+    """Checks Telegram for 'Done' or 'Watered' messages and updates Sheet."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+    updates = requests.get(url).json()
+    
+    if 'result' not in updates:
+        return df # No updates
 
-    # 1. AUTHENTICATE GOOGLE SHEETS
-    try:
-        creds_dict = json.loads(SHEET_CREDENTIALS)
-        scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        sheet_client = gspread.authorize(creds)
-        sheet = sheet_client.open("ShakahariDB").worksheet("Plants")
+    changes_made = False
+    
+    # We only look at messages from the last 24 hours
+    yesterday_ts = (datetime.now() - timedelta(days=1)).timestamp()
+
+    for u in updates['result']:
+        if 'message' not in u: continue
         
-        # Pull all data into a DataFrame
-        data = sheet.get_all_records()
-        print(f"✅ Loaded {len(data)} plants from database.")
-    except Exception as e:
-        print(f"❌ Database Error: {e}")
-        return
+        msg = u['message']
+        if msg['date'] < yesterday_ts: continue # Too old
+        
+        text = msg.get('text', '').lower()
+        msg_date = datetime.fromtimestamp(msg['date']).strftime('%Y-%m-%d')
+        
+        # LOGIC 1: "Done" or "Done all" -> Updates all 'Pending' plants
+        if text.strip() in ['done', 'done all', 'completed']:
+            # Update dataframe where Status is 'Pending'
+            mask = df['Status'] == 'Pending'
+            if mask.any():
+                df.loc[mask, 'Last Watered'] = msg_date
+                df.loc[mask, 'Status'] = 'OK'
+                changes_made = True
+                print(f"✅ User confirmed ALL pending tasks on {msg_date}")
 
-    # 2. GET CONTEXT (Weather)
+        # LOGIC 2: "Watered [Plant Name]" (Simple fuzzy match)
+        elif 'watered' in text:
+            # removing 'watered' to get the plant name
+            target_plant = text.replace('watered', '').strip()
+            
+            # Find closest match in DF
+            for index, row in df.iterrows():
+                if target_plant in row['Name'].lower():
+                    df.at[index, 'Last Watered'] = msg_date
+                    df.at[index, 'Status'] = 'OK'
+                    changes_made = True
+                    print(f"✅ User confirmed watering {row['Name']}")
+
+    if changes_made:
+        # Push updates back to Google Sheet
+        sheet.update([df.columns.values.tolist()] + df.values.tolist())
+        print("💾 Google Sheet updated with user actions.")
+        
+    return df
+
+def main():
+    print(f"🌿 Starting Plant Agent ({MODEL_ID})...")
+
+    # 1. LOAD DATABASE
+    creds_dict = json.loads(SHEET_CREDENTIALS)
+    scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    sheet_client = gspread.authorize(creds)
+    worksheet = sheet_client.open("ShakahariDB").worksheet("Plants")
+    
+    data = worksheet.get_all_records()
+    df = pd.DataFrame(data)
+
+    # 2. CHECK MAILBOX (User Feedback Loop)
+    # This updates the 'df' variable with any actions you took yesterday
+    df = process_mailbox(worksheet, df)
+
+    # 3. GET WEATHER
     weather = get_weather()
     today = datetime.now().strftime("%Y-%m-%d")
     
-    if not weather:
-        send_telegram_alert("⚠️ Plant Agent Error: Could not fetch weather data.")
-        return
-
-    # 3. BATCH PROCESSING (The Rate Limit Fix)
-    # We construct ONE massive prompt containing all inventory.
-    # This reduces API calls from N (number of plants) to 1.
-    
-    # Minify data to save tokens
-    inventory_list = []
-    for row in data:
-        inventory_list.append({
+    # 4. AGENT REASONING
+    inventory = []
+    for index, row in df.iterrows():
+        inventory.append({
             "name": row['Name'],
             "type": row['Type'],
-            "location": row['Location'],
-            "last_watered": row['Last Watered'],
-            "notes": row['Notes']
+            "last": row['Last Watered'],
+            "status": row.get('Status', 'OK') # Include status so agent knows what's pending
         })
 
     prompt = f"""
-    You are an expert botanist agent.
+    ROLE: Expert Botanist.
+    DATE: {today}
     
-    CONTEXT:
-    Date: {today}
-    Weather (Past 3 days + Today):
-    - Max Temps (C): {weather['temperature_2m_max']}
-    - Rain (mm): {weather['precipitation_sum']}
+    WEATHER:
+    Max Temps: {weather['temperature_2m_max']}
+    Rain: {weather['precipitation_sum']}
     
     INVENTORY:
-    {json.dumps(inventory_list)}
+    {json.dumps(inventory)}
     
-    INSTRUCTIONS:
-    Analyze the weather and the inventory.
-    Identify ONLY the plants that need water today.
+    TASK:
+    Identify plants that need water TODAY.
     
-    RULES:
-    1. Outdoor plants: If rain_sum > 5mm in last 2 days, do NOT water.
-    2. Indoor plants: Check 'last_watered' vs typical needs for that type.
-    
-    OUTPUT:
-    Return pure JSON with this structure:
-    {{ "tasks": [ {{ "name": "Plant Name", "reason": "Short reason" }} ] }}
+    OUTPUT JSON:
+    {{ "tasks": [ {{ "name": "PlantName", "reason": "Why" }} ] }}
     """
 
     try:
-        print("🤔 Asking Gemini...")
-        
-        # Using the new google-genai SDK method signature
         response = client.models.generate_content(
-            model=MODEL_NAME, # Specific stable version
+            model=MODEL_ID,
             contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type='application/json' # Forces valid JSON output
-            )
+            config=types.GenerateContentConfig(response_mime_type='application/json')
         )
         
-        # Parse result
         result = json.loads(response.text)
         tasks = result.get('tasks', [])
         
-        # 4. SEND NOTIFICATION
         if tasks:
-            msg_lines = [f"🌿 *Plant Care Tasks ({today})*"]
-            for t in tasks:
-                msg_lines.append(f"💧 *{t['name']}*: {t['reason']}")
+            msg = [f"🌿 *Care Tasks ({today})*"]
             
-            final_msg = "\n\n".join(msg_lines)
-            send_telegram_alert(final_msg)
-            print(f"✅ Sent alerts for {len(tasks)} plants.")
+            # Mark these as 'Pending' in the sheet so "Done" works tomorrow
+            updates_needed = False
+            
+            for t in tasks:
+                msg.append(f"💧 *{t['name']}*: {t['reason']}")
+                
+                # Update Status in DataFrame
+                mask = df['Name'] == t['name']
+                df.loc[mask, 'Status'] = 'Pending'
+                updates_needed = True
+
+            msg.append("\n_Reply 'Done' to confirm all, or 'Watered [Name]' for specific plants._")
+            send_telegram_alert("\n".join(msg))
+            
+            if updates_needed:
+                worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+                print("📝 Marked tasks as Pending in Sheet.")
+                
         else:
-            print("✅ Agent decided no watering is needed today.")
+            print("✅ No watering needed.")
             
     except Exception as e:
-        print(f"❌ Agent Error: {e}")
-        send_telegram_alert(f"⚠️ Plant Agent Failed: {str(e)}")
+        print(f"❌ Error: {e}")
+        send_telegram_alert(f"⚠️ Agent Error: {str(e)}")
 
 if __name__ == "__main__":
     main()
