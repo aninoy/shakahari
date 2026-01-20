@@ -58,7 +58,7 @@ def main():
     scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    sheet = client.open("MyPlantAgent").worksheet("Plants") # Make sure Sheet Name matches
+    sheet = client.open("ShakahariDB").worksheet("Plants") # Make sure Sheet Name matches
     
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
