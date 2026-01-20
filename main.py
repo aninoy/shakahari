@@ -15,6 +15,7 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 SHEET_CREDENTIALS = os.environ["G_SHEET_CREDENTIALS"]
 LATITUDE = 34.05 
 LONGITUDE = -118.25
+MODEL_NAME= 'gemini-2.5-flash'
 
 # --- SETUP CLIENT ---
 # We use the specific stable version 'gemini-1.5-flash-002' to avoid 404 errors
@@ -107,7 +108,7 @@ def main():
         
         # Using the new google-genai SDK method signature
         response = client.models.generate_content(
-            model='gemini-1.5-flash-002', # Specific stable version
+            model=MODEL_NAME, # Specific stable version
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type='application/json' # Forces valid JSON output
