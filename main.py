@@ -4,7 +4,7 @@ import requests
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import google.generativeai as genai
+from google import genai
 from datetime import datetime, timedelta
 import pytz
 
@@ -12,13 +12,13 @@ import pytz
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-SHEET_CREDENTIALS = os.environ["G_SHEET_CREDENTIALS"] # This will be the JSON string
-LATITUDE = 34.05 # Example: Los Angeles (Update this)
+SHEET_CREDENTIALS = os.environ["G_SHEET_CREDENTIALS"]
+LATITUDE = 34.05 
 LONGITUDE = -118.25
 
-# --- SETUP ---
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash-exp')
+# --- SETUP NEW CLIENT ---
+# The new SDK uses a Client object rather than global configuration
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_weather():
     url = f"https://api.open-meteo.com/v1/forecast?latitude={LATITUDE}&longitude={LONGITUDE}&daily=temperature_2m_max,precipitation_sum&past_days=3&forecast_days=1&timezone=auto"
@@ -26,10 +26,11 @@ def get_weather():
     return response['daily']
 
 def get_telegram_updates():
-    """Check for 'Done' messages in the last 24h to update DB."""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     try:
-        updates = requests.get(url).json()
+        response = requests.get(url)
+        if response.status_code != 200: return []
+        updates = response.json()
         if 'result' not in updates: return []
         
         valid_updates = []
@@ -37,9 +38,9 @@ def get_telegram_updates():
         
         for u in updates['result']:
             if 'message' in u and 'text' in u['message']:
+                # Telegram timestamps are integers
                 msg_date = datetime.fromtimestamp(u['message']['date'])
                 text = u['message']['text'].lower()
-                # Simple logic: If you typed "done" or "watered", we assume you did yesterday's tasks
                 if msg_date > yesterday and ("done" in text or "watered" in text):
                     valid_updates.append(text)
         return valid_updates
@@ -57,20 +58,17 @@ def main():
     creds_dict = json.loads(SHEET_CREDENTIALS)
     scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
-    sheet = client.open("ShakahariDB").worksheet("Plants") # Make sure Sheet Name matches
+    sheet_client = gspread.authorize(creds)
+    sheet = sheet_client.open("ShakahariDB").worksheet("Plants")
     
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
 
-    # 2. PROCESS USER FEEDBACK (Did you water yesterday?)
+    # 2. CHECK UPDATES
     updates = get_telegram_updates()
     if updates:
-        # If user said 'done', set 'Last Watered' to Today for pending plants
-        # (This is a simplified logic; you can make Gemini parse 'Watered the fern' later)
         print(f"User feedback received: {updates}")
-        # For V1, we will just acknowledge it. 
-        # Ideally, you'd parse "Watered Monstera" and update specific rows here.
+        # Placeholder: Logic to update DB dates would go here
 
     # 3. GET CONTEXT
     weather = get_weather()
@@ -81,16 +79,14 @@ def main():
     
     for index, row in df.iterrows():
         plant_name = row['Name']
-        last_watered = row['Last Watered']
-        plant_type = row['Type']
         
         # Construct the Prompt
         prompt = f"""
         You are a smart gardening assistant.
         TODAY: {today}
         
-        PLANT: {plant_name} ({plant_type}, {row['Location']})
-        LAST WATERED: {last_watered}
+        PLANT: {plant_name} ({row['Type']}, {row['Location']})
+        LAST WATERED: {row['Last Watered']}
         NOTES: {row['Notes']}
         
         WEATHER (Past 3 days + Today):
@@ -99,22 +95,24 @@ def main():
         
         TASK:
         Decide if this plant needs water today.
-        - Outdoor plants: Skip if it rained recently (>5mm) or is about to rain.
-        - Indoor plants: Check days elapsed since last water vs. notes.
         
         OUTPUT FORMAT:
         Return ONLY a JSON string: {{ "action": "WATER" or "WAIT", "reason": "Short explanation" }}
         """
         
         try:
-            response = model.generate_content(prompt)
-            # Clean response to ensure pure JSON
-            clean_text = response.text.replace('```json', '').replace('```', '')
+            # --- NEW SDK CALL ---
+            response = client.models.generate_content(
+                model='gemini-2.0-flash-exp',
+                contents=prompt
+            )
+            
+            # Parsing logic (strips markdown code blocks if the model adds them)
+            clean_text = response.text.replace('```json', '').replace('```', '').strip()
             decision = json.loads(clean_text)
             
             if decision['action'] == "WATER":
                 tasks.append(f"💧 *{plant_name}*: {decision['reason']}")
-                # Optional: Update Sheet to 'Pending' status if you add a status column
                 
         except Exception as e:
             print(f"Error processing {plant_name}: {e}")
@@ -123,6 +121,7 @@ def main():
     if tasks:
         msg = f"🌿 *Plant Care Daily ({today})*\n\n" + "\n".join(tasks)
         send_telegram_alert(msg)
+        print("Alert sent.")
     else:
         print("No watering needed today.")
 
