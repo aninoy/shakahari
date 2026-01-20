@@ -42,7 +42,7 @@ def main():
     scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     sheet_client = gspread.authorize(creds)
-    sheet = sheet_client.open("MyPlantAgent").worksheet("Plants")
+    sheet = sheet_client.open("ShakahariDB").worksheet("Plants")
     
     # Fetch all records at once
     data = sheet.get_all_records()
