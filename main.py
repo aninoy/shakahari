@@ -1,13 +1,12 @@
 import os
 import json
-import time
 import requests
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from google import genai
+from google.genai import types
 from datetime import datetime, timedelta
-import pytz
 
 # --- CONFIGURATION ---
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
@@ -18,106 +17,121 @@ LATITUDE = 34.05
 LONGITUDE = -118.25
 
 # --- SETUP CLIENT ---
-# We switch to 'gemini-1.5-flash' which is stable and has higher rate limits
+# We use the specific stable version 'gemini-1.5-flash-002' to avoid 404 errors
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_weather():
+    """Fetches past 3 days and today's forecast."""
     url = f"https://api.open-meteo.com/v1/forecast?latitude={LATITUDE}&longitude={LONGITUDE}&daily=temperature_2m_max,precipitation_sum&past_days=3&forecast_days=1&timezone=auto"
     try:
         response = requests.get(url).json()
-        return response['daily']
+        return response.get('daily')
     except Exception as e:
         print(f"Weather API Error: {e}")
         return None
 
 def send_telegram_alert(message):
+    """Sends a push notification to your phone."""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     requests.post(url, json=payload)
 
 def main():
-    # 1. AUTHENTICATE & FETCH DATA
-    print("Authenticating...")
-    creds_dict = json.loads(SHEET_CREDENTIALS)
-    scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    sheet_client = gspread.authorize(creds)
-    sheet = sheet_client.open("ShakahariDB").worksheet("Plants")
-    
-    # Fetch all records at once
-    data = sheet.get_all_records()
-    
-    # 2. GET CONTEXT
+    print("🌿 Starting Plant Agent...")
+
+    # 1. AUTHENTICATE GOOGLE SHEETS
+    try:
+        creds_dict = json.loads(SHEET_CREDENTIALS)
+        scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        sheet_client = gspread.authorize(creds)
+        sheet = sheet_client.open("ShakahariDB").worksheet("Plants")
+        
+        # Pull all data into a DataFrame
+        data = sheet.get_all_records()
+        print(f"✅ Loaded {len(data)} plants from database.")
+    except Exception as e:
+        print(f"❌ Database Error: {e}")
+        return
+
+    # 2. GET CONTEXT (Weather)
     weather = get_weather()
     today = datetime.now().strftime("%Y-%m-%d")
     
     if not weather:
-        send_telegram_alert("⚠️ Error fetching weather data. Skipping plant check.")
+        send_telegram_alert("⚠️ Plant Agent Error: Could not fetch weather data.")
         return
 
-    # 3. BATCH PROCESSING (The Fix)
-    # Instead of a loop, we construct one massive prompt with all plant data.
+    # 3. BATCH PROCESSING (The Rate Limit Fix)
+    # We construct ONE massive prompt containing all inventory.
+    # This reduces API calls from N (number of plants) to 1.
     
-    # Simplify data for the prompt to save tokens
-    plants_minified = []
+    # Minify data to save tokens
+    inventory_list = []
     for row in data:
-        plants_minified.append({
+        inventory_list.append({
             "name": row['Name'],
             "type": row['Type'],
-            "loc": row['Location'],
-            "last_water": row['Last Watered'],
+            "location": row['Location'],
+            "last_watered": row['Last Watered'],
             "notes": row['Notes']
         })
 
     prompt = f"""
-    You are a smart gardening assistant. 
-    TODAY: {today}
+    You are an expert botanist agent.
     
-    WEATHER REPORT (Past 3 days + Forecast):
-    - Max Temps: {weather['temperature_2m_max']}
+    CONTEXT:
+    Date: {today}
+    Weather (Past 3 days + Today):
+    - Max Temps (C): {weather['temperature_2m_max']}
     - Rain (mm): {weather['precipitation_sum']}
     
     INVENTORY:
-    {json.dumps(plants_minified, indent=2)}
+    {json.dumps(inventory_list)}
     
-    TASK:
-    Analyze the weather and the inventory. Decide which plants need water TODAY.
-    - Outdoor: heavily weighted by rain history.
-    - Indoor: weighted by 'last_water' date and 'notes'.
+    INSTRUCTIONS:
+    Analyze the weather and the inventory.
+    Identify ONLY the plants that need water today.
+    
+    RULES:
+    1. Outdoor plants: If rain_sum > 5mm in last 2 days, do NOT water.
+    2. Indoor plants: Check 'last_watered' vs typical needs for that type.
     
     OUTPUT:
-    Return a JSON object with a list of ONLY the plants that need water.
-    Format: {{ "tasks": [ {{ "name": "Plant Name", "reason": "Reason for watering" }} ] }}
+    Return pure JSON with this structure:
+    {{ "tasks": [ {{ "name": "Plant Name", "reason": "Short reason" }} ] }}
     """
-    
+
     try:
-        print("Asking Agent...")
-        # Switch to stable model
+        print("🤔 Asking Gemini...")
+        
+        # Using the new google-genai SDK method signature
         response = client.models.generate_content(
-            model='gemini-1.5-flash', 
+            model='gemini-1.5-flash-002', # Specific stable version
             contents=prompt,
-            config={'response_mime_type': 'application/json'} # Force JSON output
+            config=types.GenerateContentConfig(
+                response_mime_type='application/json' # Forces valid JSON output
+            )
         )
         
-        # Parse Response
+        # Parse result
         result = json.loads(response.text)
         tasks = result.get('tasks', [])
         
         # 4. SEND NOTIFICATION
         if tasks:
-            msg_lines = [f"🌿 *Plant Care Daily ({today})*"]
+            msg_lines = [f"🌿 *Plant Care Tasks ({today})*"]
             for t in tasks:
                 msg_lines.append(f"💧 *{t['name']}*: {t['reason']}")
             
             final_msg = "\n\n".join(msg_lines)
             send_telegram_alert(final_msg)
-            print(f"Sent alerts for {len(tasks)} plants.")
+            print(f"✅ Sent alerts for {len(tasks)} plants.")
         else:
-            print("Agent decided no watering is needed today.")
+            print("✅ Agent decided no watering is needed today.")
             
     except Exception as e:
-        print(f"Agent Error: {e}")
-        # Optional: Send error to Telegram so you know it failed
+        print(f"❌ Agent Error: {e}")
         send_telegram_alert(f"⚠️ Plant Agent Failed: {str(e)}")
 
 if __name__ == "__main__":
