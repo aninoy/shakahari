@@ -16,15 +16,15 @@ Unlike dumb timer apps, Shakahari uses **Gemini 2.5 Flash** (AI), **Open-Meteo**
 
 ```mermaid
 graph TD;
-    A[GitHub Action (Daily Trigger)] -->|1. Wake Up| B(Main Script)
-    B -->|2. Check Mailbox| C{Telegram API}
-    C -->|User Replies| D[Update Google Sheet]
-    B -->|3. Get Context| E[Open-Meteo Weather]
-    B -->|4. Get Inventory| F[Google Sheets DB]
-    B -->|5. Ask Agent| G[Gemini 2.5 Flash]
-    G -->|6. Decisions| H{Tasks Needed?}
-    H -->|Yes| I[Send Telegram Alert]
-    H -->|No| J[Sleep]
+    A[GitHub Action (Daily Trigger)] -->|1. Wake Up| B(Main Script);
+    B -->|2. Check Mailbox| C{Telegram API};
+    C -->|User Replies| D[Update Google Sheet];
+    B -->|3. Get Context| E[Open-Meteo Weather];
+    B -->|4. Get Inventory| F[Google Sheets DB];
+    B -->|5. Ask Agent| G[Gemini 2.5 Flash];
+    G -->|6. Decisions| H{Tasks Needed?};
+    H -->|Yes| I[Send Telegram Alert];
+    H -->|No| J[Sleep];
 ```
 
 ## 🛠️ Prerequisites
