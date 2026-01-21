@@ -50,7 +50,14 @@ You will need free accounts for the following services:
    - **Light**: `direct`, `indirect`, `low`, or `shade`
    - **Humidity**: `low`, `medium`, or `high`
 
-4. **Important:** Create a **Service Account** in Google Cloud Console, download the JSON key, and **share** your Google Sheet with the service account's email address (Editor access).
+4. **CareHistory Tab** (auto-created on first run):
+
+   | Date | Plant | Action | Notes |
+   |------|-------|--------|-------|
+
+   This tab logs all care actions you confirm, giving the AI context to avoid recommending recently-performed tasks.
+
+5. **Important:** Create a **Service Account** in Google Cloud Console, download the JSON key, and **share** your Google Sheet with the service account's email address (Editor access).
 
 ### 2. Telegram Bot Setup
 
