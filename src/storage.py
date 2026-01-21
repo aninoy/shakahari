@@ -7,11 +7,25 @@ from src.telegram_bot import get_recent_messages
 
 class PlantDB:
     def __init__(self):
-        creds_dict = json.loads(SHEET_CREDENTIALS)
+        try:
+            creds_dict = json.loads(SHEET_CREDENTIALS)
+        except json.JSONDecodeError as e:
+            raise Exception(f"Invalid G_SHEET_CREDENTIALS JSON: {e}")
+        
         scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        self.worksheet = client.open(SHEET_NAME).worksheet(WORKSHEET_NAME)
+        
+        try:
+            spreadsheet = client.open(SHEET_NAME)
+        except gspread.SpreadsheetNotFound:
+            raise Exception(f"Spreadsheet '{SHEET_NAME}' not found. Did you share it with the service account?")
+        
+        try:
+            self.worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
+        except gspread.WorksheetNotFound:
+            raise Exception(f"Worksheet '{WORKSHEET_NAME}' not found in '{SHEET_NAME}'")
+        
         self.df = pd.DataFrame(self.worksheet.get_all_records())
 
     def get_inventory(self):

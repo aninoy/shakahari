@@ -1,4 +1,8 @@
 import os
+from dotenv import load_dotenv
+
+# Load .env file for local development
+load_dotenv()
 
 # API Keys & Secrets
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -10,5 +14,5 @@ SHEET_CREDENTIALS = os.environ.get("G_SHEET_CREDENTIALS")
 MODEL_ID = "gemini-2.5-flash" 
 LATITUDE = 34.05 
 LONGITUDE = -118.25
-SHEET_NAME = "MyPlantAgent"
+SHEET_NAME = "ShakahariDB"
 WORKSHEET_NAME = "Plants"
