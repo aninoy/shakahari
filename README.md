@@ -43,8 +43,12 @@ You will need free accounts for the following services:
 2. Rename the first tab to `Plants`.
 3. Add the following headers:
 
-   | Name | Type | Location | Notes | Last Watered | Last Fertilized | Status |
-   |------|------|----------|-------|--------------|-----------------|--------|
+   | Name | Environment | Light | Humidity | Notes | Last Watered | Last Fertilized | Status |
+   |------|-------------|-------|----------|-------|--------------|-----------------|--------|
+
+   - **Environment**: `indoor`, `outdoor`, `balcony`, or `greenhouse`
+   - **Light**: `direct`, `indirect`, `low`, or `shade`
+   - **Humidity**: `low`, `medium`, or `high`
 
 4. **Important:** Create a **Service Account** in Google Cloud Console, download the JSON key, and **share** your Google Sheet with the service account's email address (Editor access).
 
@@ -86,23 +90,32 @@ Push your code to GitHub. The workflow is defined in `.github/workflows/daily.ym
 
 ### The Daily Notification
 
-Every morning, if action is required, Shakahari sends you a digest:
+Every morning, if action is required, Shakahari sends you a prioritized digest:
 
-> 🌿 **Care Tasks (2026-01-20)**
+> 🌿 **Plant Care Tasks (2026-01-20)**
+> _All plants generally healthy._
 >
-> 💧 Fiddle Leaf Fig: Soil likely dry after 7 days; indoor heat is high.
+> 🔴 **HIGH Priority**
+>   💧 Fiddle Leaf Fig: Soil dry after 7 days; indoor heat accelerates drying.
 >
-> 🧪 Monstera: It is growing season and hasn't been fed in 4 weeks.
+> 🟡 **MEDIUM Priority**
+>   🧪 Monstera: Growing season, hasn't been fed in 4 weeks.
+>   🔄 Pothos: Leaves leaning toward window, rotate 90° for even growth.
 >
-> _Reply 'Done' to confirm._
+> _Reply 'Done' to confirm all._
 
 ### Interacting with the Bot
 
-You don't need to open the spreadsheet. Just reply to the bot:
+Reply to the bot to confirm tasks:
 
-- **"Done"** or **"Done all"**: Marks all pending tasks (Water & Fertilizer) as completed today.
-- **"Watered [Plant Name]"**: Updates only the _Last Watered_ date for that specific plant.
-- **"Fertilized [Plant Name]"**: Updates only the _Last Fertilized_ date for that specific plant.
+| Reply | Effect |
+|-------|--------|
+| `Done` | Marks all pending tasks complete |
+| `Watered [Plant]` | Updates Last Watered date |
+| `Fertilized [Plant]` | Updates Last Fertilized date |
+| `Rotated [Plant]` | Clears ROTATE task |
+| `Pruned [Plant]` | Clears PRUNE task |
+| `Misted [Plant]` | Clears MIST task |
 
 > **Note:** Shakahari processes your replies the **next time** it runs (the following morning).
 
