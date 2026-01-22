@@ -99,20 +99,19 @@ Push your code to GitHub. The workflow is defined in `.github/workflows/daily.ym
 
 Every morning, if action is required, Shakahari sends you a digest grouped by action type:
 
-> 🌿 **Plant Care Tasks (2026-01-22)**
-> _All plants generally healthy._
+> 🌿 **Plant Care Tasks (2026-01-22)**  
+>_All plants generally healthy._
 >
-> � **WATER**: Monstera, Peace Lily, Fern
-> 🔄 **ROTATE**: Pothos
-> 🧪 **FERTILIZE**: Fiddle Leaf
+> � **WATER**: Monstera, Peace Lily, Fern  
+> 🔄 **ROTATE**: Pothos  
+> 🧪 **FERTILIZE**: Fiddle Leaf 
 >
-> —
-> **Details:**
-> 🔴💧 Monstera: Soil dry after 8 days, indoor heat accelerates drying
-> 🟡💧 Peace Lily: Low humidity environment needs more frequent watering
-> 🟢🔄 Pothos: Leaves leaning toward window, rotate for even growth
+> **Details:**. 
+> 🔴💧 Monstera: Soil dry after 8 days, indoor heat accelerates drying  
+> 🟡💧 Peace Lily: Low humidity environment needs more frequent watering  
+> 🟢🔄 Pothos: Leaves leaning toward window, rotate for even growth  
 >
-> _Reply 'Done' to confirm all._
+> _Reply 'Done' to confirm all._  
 > _Or 'Watered Fern, Rotated Pothos' for specific._
 
 ### Interacting with the Bot
