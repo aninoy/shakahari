@@ -221,8 +221,17 @@ class PlantDB:
             if mask.any():
                 current = str(self.df.loc[mask, 'Status'].values[0])
                 
+                # Check if this action is already pending (avoid duplicates like CHECK_CHECK)
+                # Split current status into parts and check if action already exists
+                current_actions = current.replace('PENDING_', '').split('_') if current.startswith('PENDING') else []
+                
+                if action in current_actions:
+                    # Action already pending, skip
+                    print(f"⏭️ {action} already pending for {name}, skipping")
+                    continue
+                
                 # Build composite status if multiple actions
-                if current.startswith('PENDING') and f'PENDING_{action}' not in current:
+                if current.startswith('PENDING'):
                     new_status = f"{current}_{action}"
                 else:
                     new_status = f"PENDING_{action}"

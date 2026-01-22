@@ -26,37 +26,43 @@ PRIORITY_MARKERS = {
 
 
 def format_tasks(tasks, summary):
-    """Format tasks into a readable Telegram message."""
+    """Format tasks into a readable Telegram message grouped by action type."""
     today = datetime.now().strftime("%Y-%m-%d")
     lines = [f"🌿 *Plant Care Tasks ({today})*"]
     
     if summary:
-        lines.append(f"_{summary}_\n")
+        lines.append(f"_{summary}_")
     
-    # Group tasks by priority
-    by_priority = {'HIGH': [], 'MEDIUM': [], 'LOW': []}
+    # Group tasks by action type
+    by_action = {}
     for t in tasks:
-        priority = t.get('priority', 'MEDIUM').upper()
-        if priority not in by_priority:
-            priority = 'MEDIUM'
-        by_priority[priority].append(t)
+        action = t.get('action', 'CHECK').upper()
+        if action not in by_action:
+            by_action[action] = []
+        by_action[action].append(t)
     
-    # Output in priority order
-    for priority in ['HIGH', 'MEDIUM', 'LOW']:
-        if by_priority[priority]:
-            marker = PRIORITY_MARKERS.get(priority, '')
-            lines.append(f"\n{marker} *{priority} Priority*")
-            
-            for t in by_priority[priority]:
-                action = t.get('action', 'CHECK').upper()
-                icon = ACTION_ICONS.get(action, '📋')
-                name = t.get('name', 'Unknown')
-                reason = t.get('reason', '')
-                lines.append(f"  {icon} *{name}*: {reason}")
+    # Quick summary section - grouped by action
+    lines.append("")
+    for action in ['WATER', 'FERTILIZE', 'MIST', 'ROTATE', 'MOVE', 'PRUNE', 'REPOT', 'CHECK']:
+        if action in by_action:
+            icon = ACTION_ICONS.get(action, '📋')
+            plant_names = [t.get('name', '?') for t in by_action[action]]
+            lines.append(f"{icon} *{action}*: {', '.join(plant_names)}")
+    
+    # Detailed section with reasons
+    lines.append("\n—")
+    lines.append("*Details:*")
+    for t in tasks:
+        action = t.get('action', 'CHECK').upper()
+        icon = ACTION_ICONS.get(action, '📋')
+        name = t.get('name', 'Unknown')
+        reason = t.get('reason', '')
+        priority = t.get('priority', '').upper()
+        priority_marker = PRIORITY_MARKERS.get(priority, '')
+        lines.append(f"{priority_marker}{icon} *{name}*: {reason}")
     
     lines.append("\n_Reply 'Done' to confirm all._")
-    lines.append("_Or '[Action] [Plant]' for specific updates._")
-    lines.append("_e.g., 'Watered Fern' or 'Rotated Monstera'_")
+    lines.append("_Or 'Watered Fern, Rotated Pothos' for specific._")
     
     return "\n".join(lines)
 
