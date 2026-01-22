@@ -106,7 +106,7 @@ Every morning, if action is required, Shakahari sends you a digest grouped by ac
 > 🔄 **ROTATE**: Pothos  
 > 🧪 **FERTILIZE**: Fiddle Leaf 
 >
-> **Details:**. 
+> **Details:**  
 > 🔴💧 Monstera: Soil dry after 8 days, indoor heat accelerates drying  
 > 🟡💧 Peace Lily: Low humidity environment needs more frequent watering  
 > 🟢🔄 Pothos: Leaves leaning toward window, rotate for even growth  
