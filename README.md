@@ -97,19 +97,23 @@ Push your code to GitHub. The workflow is defined in `.github/workflows/daily.ym
 
 ### The Daily Notification
 
-Every morning, if action is required, Shakahari sends you a prioritized digest:
+Every morning, if action is required, Shakahari sends you a digest grouped by action type:
 
-> 🌿 **Plant Care Tasks (2026-01-20)**
+> 🌿 **Plant Care Tasks (2026-01-22)**
 > _All plants generally healthy._
 >
-> 🔴 **HIGH Priority**
->   💧 Fiddle Leaf Fig: Soil dry after 7 days; indoor heat accelerates drying.
+> � **WATER**: Monstera, Peace Lily, Fern
+> 🔄 **ROTATE**: Pothos
+> 🧪 **FERTILIZE**: Fiddle Leaf
 >
-> 🟡 **MEDIUM Priority**
->   🧪 Monstera: Growing season, hasn't been fed in 4 weeks.
->   🔄 Pothos: Leaves leaning toward window, rotate 90° for even growth.
+> —
+> **Details:**
+> 🔴💧 Monstera: Soil dry after 8 days, indoor heat accelerates drying
+> 🟡💧 Peace Lily: Low humidity environment needs more frequent watering
+> 🟢🔄 Pothos: Leaves leaning toward window, rotate for even growth
 >
 > _Reply 'Done' to confirm all._
+> _Or 'Watered Fern, Rotated Pothos' for specific._
 
 ### Interacting with the Bot
 
