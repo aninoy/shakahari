@@ -124,6 +124,10 @@ Reply to the bot to confirm tasks:
 | `Pruned [Plant]` | Clears PRUNE task |
 | `Misted [Plant]` | Clears MIST task |
 
+**Composite replies:** You can confirm multiple actions in one message:
+- `Watered Fern, checked Monstera`
+- `Rotated Pothos and pruned Peace Lily`
+
 > **Note:** Shakahari processes your replies the **next time** it runs (the following morning).
 
 ## 📂 Project Structure

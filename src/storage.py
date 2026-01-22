@@ -104,30 +104,33 @@ class PlantDB:
         """Updates DB based on user replies - handles all action types."""
         from src.telegram_bot import get_recent_messages
         messages = get_recent_messages()
+        
+        print(f"📬 Checking mailbox... found {len(messages) if messages else 0} messages")
+        
         if not messages:
             return False
 
         changes = False
         for msg in messages:
-            text = msg['text'].lower().strip()
+            raw_text = msg['text']
+            text = raw_text.lower().strip()
             date = msg['date']
+            
+            print(f"📩 Processing: '{raw_text}' (date: {date})")
 
             # CASE 1: "DONE" - Clears all pending statuses
             if text in ['done', 'done all', 'completed']:
-                # Process all pending plants
                 mask_pending = self.df['Status'].str.startswith('PENDING', na=False)
                 for idx, row in self.df[mask_pending].iterrows():
                     status = row['Status']
                     plant_name = row['Name']
                     
-                    # Log each action to history
                     if 'WATER' in status:
                         self.df.at[idx, 'Last Watered'] = date
                         self.log_action(plant_name, 'WATER', 'Confirmed via Done')
                     if 'FERT' in status:
                         self.df.at[idx, 'Last Fertilized'] = date
                         self.log_action(plant_name, 'FERTILIZE', 'Confirmed via Done')
-                    # Log other actions
                     for action in ['MIST', 'ROTATE', 'MOVE', 'PRUNE', 'REPOT', 'CHECK']:
                         if action in status:
                             self.log_action(plant_name, action, 'Confirmed via Done')
@@ -138,35 +141,71 @@ class PlantDB:
                 if changes:
                     print(f"✅ User confirmed ALL tasks on {date}")
 
-            # CASE 2: Specific action - "[Action] [Plant]" (e.g., "Watered Fern")
+            # CASE 2: Specific action(s) - supports compound like "watered fern, checked monstera"
             else:
-                for keyword, action in ACTION_KEYWORDS.items():
-                    if keyword in text:
-                        plant = text.replace(keyword, '').strip()
-                        for idx, row in self.df.iterrows():
-                            if plant and plant in row['Name'].lower():
+                # Split on comma, semicolon, or "and" for compound messages
+                import re
+                parts = re.split(r'[,;]|\band\b', text)
+                print(f"   Split into {len(parts)} part(s): {parts}")
+                
+                for part in parts:
+                    part = part.strip()
+                    if not part:
+                        continue
+                    
+                    print(f"   Processing part: '{part}'")
+                    matched = False
+                    
+                    for keyword, action in ACTION_KEYWORDS.items():
+                        if keyword in part:
+                            # Extract plant name by removing the keyword
+                            plant_query = part.replace(keyword, '').strip()
+                            print(f"      Found keyword '{keyword}' -> action={action}, plant_query='{plant_query}'")
+                            
+                            if not plant_query:
+                                print(f"      ⚠️ No plant name found after keyword")
+                                continue
+                            
+                            # Try to match plant name
+                            found_plant = False
+                            for idx, row in self.df.iterrows():
                                 plant_name = row['Name']
-                                
-                                # Update date columns for water/fertilize
-                                if action == 'WATER':
-                                    self.df.at[idx, 'Last Watered'] = date
-                                elif action == 'FERTILIZE':
-                                    self.df.at[idx, 'Last Fertilized'] = date
-                                
-                                # Log to history
-                                self.log_action(plant_name, action)
-                                
-                                # Clear this specific pending action
-                                curr_status = str(row.get('Status', ''))
-                                if f'PENDING_{action}' in curr_status:
-                                    new_status = curr_status.replace(f'PENDING_{action}', '').strip('_')
-                                    self.df.at[idx, 'Status'] = new_status if new_status.startswith('PENDING') else 'OK'
+                                if plant_query in plant_name.lower():
+                                    found_plant = True
+                                    print(f"      ✓ Matched plant: {plant_name}")
+                                    
+                                    # Update date columns for water/fertilize
+                                    if action == 'WATER':
+                                        self.df.at[idx, 'Last Watered'] = date
+                                    elif action == 'FERTILIZE':
+                                        self.df.at[idx, 'Last Fertilized'] = date
+                                    
+                                    # Log to history
+                                    self.log_action(plant_name, action)
+                                    
+                                    # Clear this specific pending action
+                                    curr_status = str(row.get('Status', ''))
+                                    if f'PENDING_{action}' in curr_status:
+                                        new_status = curr_status.replace(f'PENDING_{action}', '').strip('_')
+                                        self.df.at[idx, 'Status'] = new_status if new_status.startswith('PENDING') else 'OK'
+                                    
                                     changes = True
-                                    print(f"✅ Marked {action} complete for {plant_name}")
-                        break
+                                    print(f"      ✅ Marked {action} complete for {plant_name}")
+                            
+                            if not found_plant:
+                                print(f"      ⚠️ No matching plant found for '{plant_query}'")
+                            
+                            matched = True
+                            break  # Only break inner keyword loop, continue to next part
+                    
+                    if not matched:
+                        print(f"      ⚠️ No keyword matched in '{part}'")
 
         if changes:
             self.save()
+        else:
+            print("📭 No changes made to database")
+        
         return changes
 
     def mark_pending(self, tasks):
