@@ -6,11 +6,14 @@ Unlike dumb timer apps, Shakahari uses **Gemini 2.5 Flash** (AI), **Open-Meteo**
 
 ## ✨ Features
 
-- **🧠 Context-Aware Agent:** Shakahari analyzes recent rain history, temperature forecasts, and specific plant hardiness to decide if care is _actually_ needed.
-- **🌦️ Weather Integrated:** Automatically skips watering outdoor plants if it rained heavily yesterday or is about to rain today.
-- **💬 Two-Way Feedback:** Receive tasks via **Telegram**. Reply with "Done", "Watered Fern", or "Fertilized Monstera" to automatically update the database.
-- **⚡ Rate-Limit Proof:** Uses architectural batching to check your entire inventory in a single API call.
-- **📂 Serverless:** Runs on a scheduled GitHub Action (Cron). No AWS/GCP bills. No server maintenance.
+- **🧠 Context-Aware Agent:** Analyzes recent rain history, temperature forecasts, and specific plant hardiness to decide if care is _actually_ needed.
+- **📖 Plant-Specific Guidelines:** Uses [Perenual API](https://perenual.com) to fetch watering frequency for 10,000+ plant species.
+- **📅 Days Tracking:** Calculates days since each action type (WATER, MIST, ROTATE, etc.) from CareHistory.
+- **🛡️ Safety Filters:** Won't recommend watering if < 3 days since last watering, rotating if < 7 days, etc.
+- **🌦️ Weather Integrated:** Automatically skips watering outdoor plants if it rained.
+- **💬 Two-Way Feedback:** Receive tasks via **Telegram**. Reply with "Done" or "Watered Fern, Rotated Pothos" for composite updates.
+- **📂 Serverless:** Runs on a scheduled GitHub Action (Cron). No AWS/GCP bills.
+
 
 ## 🏗️ Architecture
 

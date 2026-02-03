@@ -1,0 +1,56 @@
+{
+  "snake plant": {
+    "watering": "Average",
+    "watering_period": null,
+    "min_watering_days": 5,
+    "max_watering_days": 10,
+    "sunlight": [
+      "part shade",
+      "part sun/part shade"
+    ],
+    "common_name": "rattlesnake plant"
+  },
+  "blackberry": {
+    "watering": "Average",
+    "watering_period": "\"2-3\"",
+    "min_watering_days": 5,
+    "max_watering_days": 10,
+    "sunlight": [
+      "Part shade",
+      "full shade"
+    ],
+    "common_name": "corydalis"
+  },
+  "mint": {
+    "watering": "Average",
+    "watering_period": "\"7-10\"",
+    "min_watering_days": 5,
+    "max_watering_days": 10,
+    "sunlight": [
+      "full sun",
+      "part shade"
+    ],
+    "common_name": "hummingbird's mint"
+  },
+  "camellia": {
+    "watering": "Average",
+    "watering_period": "\"3-4\"",
+    "min_watering_days": 5,
+    "max_watering_days": 10,
+    "sunlight": [
+      "Part shade"
+    ],
+    "common_name": "camellia"
+  },
+  "spider plant": {
+    "watering": "Average",
+    "watering_period": "\"7-10\"",
+    "min_watering_days": 5,
+    "max_watering_days": 10,
+    "sunlight": [
+      "part shade",
+      "filtered shade"
+    ],
+    "common_name": "spider plant"
+  }
+}
