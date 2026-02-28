@@ -49,7 +49,7 @@ def format_tasks(tasks, summary):
             plant_names = [t.get('name', '?') for t in by_action[action]]
             lines.append(f"{icon} *{action}*: {', '.join(plant_names)}")
     
-    # Detailed section with reasons
+    # Detailed section with reasons and clickable commands
     lines.append("\n—")
     lines.append("*Details:*")
     for t in tasks:
@@ -59,10 +59,16 @@ def format_tasks(tasks, summary):
         reason = t.get('reason', '')
         priority = t.get('priority', '').upper()
         priority_marker = PRIORITY_MARKERS.get(priority, '')
+        
+        # Create clickable command (e.g. /water_monstera)
+        safe_name = "".join(c if c.isalnum() else "_" for c in name.lower())
+        safe_name = "_".join(filter(None, safe_name.split("_"))) # Remove duplicate underscores
+        command = f"/{action.lower()}_{safe_name}"
+        
         lines.append(f"{priority_marker}{icon} *{name}*: {reason}")
+        lines.append(f"   👉 Tap to log: {command}")
     
-    lines.append("\n_Reply 'Done' to confirm all._")
-    lines.append("_Or 'Watered Fern, Rotated Pothos' for specific._")
+    lines.append("\n_Reply 'Done' to confirm all at once._")
     
     return "\n".join(lines)
 

@@ -141,8 +141,12 @@ class PlantDB:
                 if changes:
                     print(f"✅ User confirmed ALL tasks on {date}")
 
-            # CASE 2: Specific action(s) - supports compound like "watered fern, checked monstera"
+            # CASE 2: Specific action(s) - supports slash commands and compound sentences
             else:
+                # Track the last seen action to apply to subsequent plant names without explicit actions
+                # e.g., "watered monstera, fiddle leaf fig" -> applies WATER to both
+                last_action = None
+                
                 # Split on comma, semicolon, or "and" for compound messages
                 import re
                 parts = re.split(r'[,;]|\band\b', text)
@@ -156,50 +160,90 @@ class PlantDB:
                     print(f"   Processing part: '{part}'")
                     matched = False
                     
-                    for keyword, action in ACTION_KEYWORDS.items():
-                        if keyword in part:
-                            # Extract plant name by removing the keyword
-                            plant_query = part.replace(keyword, '').strip()
-                            print(f"      Found keyword '{keyword}' -> action={action}, plant_query='{plant_query}'")
+                    # 2a. Check for slash commands (e.g. /water_monstera)
+                    if part.startswith('/'):
+                        # Parse command like /water_monstera -> action="water", plant="monstera"
+                        cmd_parts = part[1:].split('_', 1)
+                        if len(cmd_parts) == 2:
+                            cmd_action, cmd_plant = cmd_parts
+                            action = cmd_action.upper()
+                            plant_query = cmd_plant.replace('_', ' ').strip()
                             
-                            if not plant_query:
-                                print(f"      ⚠️ No plant name found after keyword")
-                                continue
-                            
-                            # Try to match plant name
-                            found_plant = False
-                            for idx, row in self.df.iterrows():
-                                plant_name = row['Name']
-                                if plant_query in plant_name.lower():
-                                    found_plant = True
-                                    print(f"      ✓ Matched plant: {plant_name}")
-                                    
-                                    # Update date columns for water/fertilize
-                                    if action == 'WATER':
-                                        self.df.at[idx, 'Last Watered'] = date
-                                    elif action == 'FERTILIZE':
-                                        self.df.at[idx, 'Last Fertilized'] = date
-                                    
-                                    # Log to history
-                                    self.log_action(plant_name, action)
-                                    
-                                    # Clear this specific pending action
-                                    curr_status = str(row.get('Status', ''))
-                                    if f'PENDING_{action}' in curr_status:
-                                        new_status = curr_status.replace(f'PENDING_{action}', '').strip('_')
-                                        self.df.at[idx, 'Status'] = new_status if new_status.startswith('PENDING') else 'OK'
-                                    
-                                    changes = True
-                                    print(f"      ✅ Marked {action} complete for {plant_name}")
-                            
-                            if not found_plant:
-                                print(f"      ⚠️ No matching plant found for '{plant_query}'")
-                            
-                            matched = True
-                            break  # Only break inner keyword loop, continue to next part
+                            # Validate it's a known action
+                            if action in ACTION_KEYWORDS.values() or action in [v.upper() for v in ACTION_KEYWORDS.values()] or action in [k.upper() for k in ACTION_KEYWORDS.keys()] or action in ['WATER', 'FERTILIZE', 'MIST', 'ROTATE', 'MOVE', 'PRUNE', 'REPOT', 'CHECK']:
+                                last_action = action
+                                print(f"      📱 Parsed slash command: action={action}, plant_query='{plant_query}'")
+                            else:
+                                print(f"      ⚠️ Unknown action in command: {action}")
+                                action = None
+                        else:
+                            print(f"      ⚠️ Invalid command format: {part}")
+                            action = None
+                            plant_query = None
+
+                    # 2b. Check for natural language keywords
+                    else:
+                        action = None
+                        plant_query = part
+                        for keyword, kw_action in ACTION_KEYWORDS.items():
+                            if keyword in part:
+                                action = kw_action
+                                last_action = action
+                                plant_query = part.replace(keyword, '').strip()
+                                print(f"      Found keyword '{keyword}' -> action={action}, plant_query='{plant_query}'")
+                                break
                     
-                    if not matched:
-                        print(f"      ⚠️ No keyword matched in '{part}'")
+                    # If no action found in this part, but we have a previous action, carry it over
+                    if not action and last_action:
+                        action = last_action
+                        plant_query = part.strip()
+                        print(f"      Carrying over previous action '{action}' for plant_query='{plant_query}'")
+                    
+                    if not action:
+                        print(f"      ⚠️ No action keyword found and no previous action to carry over")
+                        continue
+                        
+                    if not plant_query:
+                        print(f"      ⚠️ No plant name found")
+                        continue
+                    
+                    # Simplify plant query for matching if it came from a slash command
+                    search_query = plant_query
+                    
+                    # Try to match plant name
+                    found_plant = False
+                    # Create a safe name for each row to match against slash commands
+                    for idx, row in self.df.iterrows():
+                        plant_name = row['Name']
+                        safe_name = "".join(c if c.isalnum() else "_" for c in plant_name.lower())
+                        safe_name = "_".join(filter(None, safe_name.split("_")))
+                        
+                        if search_query in plant_name.lower() or search_query == safe_name:
+                            found_plant = True
+                            print(f"      ✓ Matched plant: {plant_name}")
+                            
+                            # Update date columns for water/fertilize
+                            if action == 'WATER':
+                                self.df.at[idx, 'Last Watered'] = date
+                            elif action == 'FERTILIZE':
+                                self.df.at[idx, 'Last Fertilized'] = date
+                            
+                            # Log to history
+                            self.log_action(plant_name, action)
+                            
+                            # Clear this specific pending action
+                            curr_status = str(row.get('Status', ''))
+                            if f'PENDING_{action}' in curr_status:
+                                new_status = curr_status.replace(f'PENDING_{action}', '').strip('_')
+                                self.df.at[idx, 'Status'] = new_status if new_status.startswith('PENDING') else 'OK'
+                            
+                            changes = True
+                            print(f"      ✅ Marked {action} complete for {plant_name}")
+                    
+                    if not found_plant:
+                        print(f"      ⚠️ No matching plant found for '{search_query}'")
+                    
+                    matched = True
 
         if changes:
             self.save()
