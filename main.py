@@ -28,10 +28,10 @@ PRIORITY_MARKERS = {
 def format_tasks(tasks, summary):
     """Format tasks into a readable Telegram message grouped by action type."""
     today = datetime.now().strftime("%Y-%m-%d")
-    lines = [f"🌿 *Plant Care Tasks ({today})*"]
+    lines = [f"🌿 <b>Plant Care Tasks ({today})</b>"]
     
     if summary:
-        lines.append(f"_{summary}_")
+        lines.append(f"<i>{summary}</i>")
     
     # Group tasks by action type
     by_action = {}
@@ -47,11 +47,11 @@ def format_tasks(tasks, summary):
         if action in by_action:
             icon = ACTION_ICONS.get(action, '📋')
             plant_names = [t.get('name', '?') for t in by_action[action]]
-            lines.append(f"{icon} *{action}*: {', '.join(plant_names)}")
+            lines.append(f"{icon} <b>{action}</b>: {', '.join(plant_names)}")
     
     # Detailed section with reasons and clickable commands
     lines.append("\n—")
-    lines.append("*Details:*")
+    lines.append("<b>Details:</b>")
     for t in tasks:
         action = t.get('action', 'CHECK').upper()
         icon = ACTION_ICONS.get(action, '📋')
@@ -65,10 +65,10 @@ def format_tasks(tasks, summary):
         safe_name = "_".join(filter(None, safe_name.split("_"))) # Remove duplicate underscores
         command = f"/{action.lower()}_{safe_name}"
         
-        lines.append(f"{priority_marker}{icon} *{name}*: {reason}")
+        lines.append(f"{priority_marker}{icon} <b>{name}</b>: {reason}")
         lines.append(f"   👉 Tap to log: {command}")
     
-    lines.append("\n_Reply 'Done' to confirm all at once._")
+    lines.append("\n<i>Reply 'Done' to confirm all at once.</i>")
     
     return "\n".join(lines)
 
