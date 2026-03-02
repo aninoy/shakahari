@@ -52,5 +52,15 @@
       "filtered shade"
     ],
     "common_name": "spider plant"
+  },
+  "european silver fir": {
+    "watering": "Frequent",
+    "watering_period": "\"7-10\"",
+    "min_watering_days": 2,
+    "max_watering_days": 4,
+    "sunlight": [
+      "full sun"
+    ],
+    "common_name": "European Silver Fir"
   }
 }
