@@ -95,9 +95,10 @@ class PlantDB:
         
         return summary
 
-    def log_action(self, plant_name, action, notes=""):
+    def log_action(self, plant_name, action, date=None, notes=""):
         """Log a care action to history."""
-        date = datetime.now().strftime('%Y-%m-%d')
+        if not date:
+            date = datetime.now().strftime('%Y-%m-%d')
         self.history_ws.append_row([date, plant_name, action, notes])
 
     def sync_from_mailbox(self):
@@ -127,13 +128,13 @@ class PlantDB:
                     
                     if 'WATER' in status:
                         self.df.at[idx, 'Last Watered'] = date
-                        self.log_action(plant_name, 'WATER', 'Confirmed via Done')
+                        self.log_action(plant_name, 'WATER', date=date, notes='Confirmed via Done')
                     if 'FERT' in status:
                         self.df.at[idx, 'Last Fertilized'] = date
-                        self.log_action(plant_name, 'FERTILIZE', 'Confirmed via Done')
+                        self.log_action(plant_name, 'FERTILIZE', date=date, notes='Confirmed via Done')
                     for action in ['MIST', 'ROTATE', 'MOVE', 'PRUNE', 'REPOT', 'CHECK']:
                         if action in status:
-                            self.log_action(plant_name, action, 'Confirmed via Done')
+                            self.log_action(plant_name, action, date=date, notes='Confirmed via Done')
                     
                     self.df.at[idx, 'Status'] = 'OK'
                     changes = True
@@ -229,7 +230,7 @@ class PlantDB:
                                 self.df.at[idx, 'Last Fertilized'] = date
                             
                             # Log to history
-                            self.log_action(plant_name, action)
+                            self.log_action(plant_name, action, date=date)
                             
                             # Clear this specific pending action
                             curr_status = str(row.get('Status', ''))
