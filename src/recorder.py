@@ -7,7 +7,7 @@ from src.callbacks import (
     encode_log_action,
     encode_log_back,
 )
-from src.config import TELEGRAM_WEBHOOK_SECRET
+from src.config import TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET
 from src.storage import PlantDB
 from src.telegram_bot import answer_callback_query, edit_message_reply_markup, edit_message_text, send_message
 
@@ -26,6 +26,12 @@ def telegram_webhook(request):
     update = request.get_json(silent=True) or {}
 
     try:
+        # The secret header proves Telegram sent this update, not that the owner did.
+        # Anyone who finds the bot can message it, so only act on the owner's chat.
+        if not _is_from_owner(update):
+            print("⚠️ Recorder: ignoring update from a non-owner chat.")
+            return ("OK", 200)
+
         if "callback_query" in update:
             _handle_callback(update["callback_query"])
         elif "message" in update and update["message"].get("text", "").strip() == "/log":
@@ -34,6 +40,22 @@ def telegram_webhook(request):
         print(f"⚠️ Recorder: failed to process update: {e}")
 
     return ("OK", 200)
+
+
+def _is_from_owner(update):
+    """True only if the update came from TELEGRAM_CHAT_ID. Compares as strings because
+    env vars are strings while Telegram sends chat ids as JSON numbers."""
+    if not TELEGRAM_CHAT_ID:
+        print("⚠️ Recorder: TELEGRAM_CHAT_ID is not set — ignoring all updates.")
+        return False
+
+    if "callback_query" in update:
+        chat = update["callback_query"].get("message", {}).get("chat", {})
+    else:
+        chat = update.get("message", {}).get("chat", {})
+
+    chat_id = chat.get("id")
+    return chat_id is not None and str(chat_id) == str(TELEGRAM_CHAT_ID)
 
 
 def _handle_callback(callback_query):

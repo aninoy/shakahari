@@ -4,6 +4,14 @@ import pytest
 from src import recorder
 
 
+# The owner's chat id as config holds it (env vars are always strings)...
+OWNER_CHAT_ID = "424242"
+# ...and as Telegram sends it inside an update (a JSON number).
+OWNER_CHAT_ID_FROM_TELEGRAM = 424242
+# Any other Telegram user who discovers the bot.
+STRANGER_CHAT_ID = 999999
+
+
 class FakeRequest:
     def __init__(self, body, secret="test-secret"):
         self._body = body
@@ -36,12 +44,13 @@ class FakePlantDB:
 
 
 @pytest.fixture(autouse=True)
-def _reset_fake_db():
+def _reset_fake_db(monkeypatch):
     FakePlantDB.instances = []
+    monkeypatch.setattr(recorder, "TELEGRAM_CHAT_ID", OWNER_CHAT_ID)
     yield
 
 
-def _callback_update(data, chat_id=1, message_id=2, markup=None):
+def _callback_update(data, chat_id=OWNER_CHAT_ID_FROM_TELEGRAM, message_id=2, markup=None):
     return {
         "callback_query": {
             "id": "cbq-1",
@@ -53,6 +62,10 @@ def _callback_update(data, chat_id=1, message_id=2, markup=None):
             },
         }
     }
+
+
+def _message_update(text, chat_id=OWNER_CHAT_ID_FROM_TELEGRAM):
+    return {"message": {"chat": {"id": chat_id}, "text": text}}
 
 
 def test_webhook_rejects_wrong_secret(monkeypatch):
@@ -75,6 +88,47 @@ def test_webhook_refuses_every_request_when_secret_is_unset(monkeypatch, unset_v
     assert recorder.telegram_webhook(FakeRequest({"callback_query": {}}, secret=None))[1] == 403
     assert recorder.telegram_webhook(FakeRequest({"callback_query": {}}, secret=""))[1] == 403
     assert recorder.telegram_webhook(FakeRequest({"callback_query": {}}, secret="anything"))[1] == 403
+
+
+def test_callback_from_another_chat_is_ignored(monkeypatch):
+    """The secret header only proves Telegram sent the update, not that the owner did.
+    A stranger's button tap must not reach the Sheet."""
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+    answers = []
+    edits = []
+    monkeypatch.setattr(recorder, "answer_callback_query", lambda *a, **k: answers.append((a, k)))
+    monkeypatch.setattr(recorder, "edit_message_reply_markup", lambda *a, **k: edits.append((a, k)))
+
+    markup = {"inline_keyboard": [[{"text": "Watered", "callback_data": "t:WATER:Monstera"}]]}
+    request = FakeRequest(
+        _callback_update("t:WATER:Monstera", chat_id=STRANGER_CHAT_ID, markup=markup),
+        secret="test-secret",
+    )
+
+    body, status = recorder.telegram_webhook(request)
+
+    # Same 200 the owner gets, so a prober learns nothing from the response.
+    assert status == 200
+    assert FakePlantDB.instances == []
+    assert answers == []
+    assert edits == []
+
+
+def test_log_command_from_another_chat_is_ignored(monkeypatch):
+    """A stranger's /log must not read the inventory nor push a picker into the owner's chat."""
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+    sent = []
+    monkeypatch.setattr(recorder, "send_message", lambda text, reply_markup=None: sent.append(text))
+
+    request = FakeRequest(_message_update("/log", chat_id=STRANGER_CHAT_ID), secret="test-secret")
+
+    body, status = recorder.telegram_webhook(request)
+
+    assert status == 200
+    assert FakePlantDB.instances == []
+    assert sent == []
 
 
 def test_task_button_logs_action_and_confirms(monkeypatch):
@@ -215,9 +269,17 @@ def test_unknown_callback_data_is_a_noop(monkeypatch):
 
 def test_malformed_callback_query_returns_200_without_crashing(monkeypatch):
     monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
-    # Missing "message" entirely -- something a well-formed digest button never sends,
-    # but the webhook must not 500 (Telegram would retry indefinitely) if it ever does.
-    request = FakeRequest({"callback_query": {"id": "cbq-2", "data": "t:WATER:Monstera"}}, secret="test-secret")
+    # From the owner (so it gets past the sender check) but missing "message_id" --
+    # something a well-formed digest button never sends, but the webhook must not
+    # 500 (Telegram would retry indefinitely) if it ever does.
+    request = FakeRequest(
+        {"callback_query": {
+            "id": "cbq-2",
+            "data": "t:WATER:Monstera",
+            "message": {"chat": {"id": OWNER_CHAT_ID_FROM_TELEGRAM}},
+        }},
+        secret="test-secret",
+    )
 
     body, status = recorder.telegram_webhook(request)
 
@@ -235,7 +297,7 @@ def test_log_command_sends_plant_picker(monkeypatch):
     sent = []
     monkeypatch.setattr(recorder, "send_message", lambda text, reply_markup=None: sent.append((text, reply_markup)))
 
-    request = FakeRequest({"message": {"chat": {"id": 1}, "text": "/log"}}, secret="test-secret")
+    request = FakeRequest(_message_update("/log"), secret="test-secret")
 
     recorder.telegram_webhook(request)
 
