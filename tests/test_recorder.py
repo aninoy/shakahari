@@ -136,6 +136,34 @@ def test_skip_button_clears_without_logging(monkeypatch):
     assert edits[-1]["inline_keyboard"][0] == [{"text": "⏭ Skipped for today", "callback_data": "noop"}]
 
 
+def test_skip_button_shows_error_when_plant_not_found(monkeypatch):
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+
+    class NotFoundPlantDB(FakePlantDB):
+        def clear_pending_action(self, plant_name, action):
+            self.skip_calls.append((plant_name, action))
+            return False
+
+    monkeypatch.setattr(recorder, "PlantDB", NotFoundPlantDB)
+
+    edits = []
+    answers = []
+    monkeypatch.setattr(recorder, "edit_message_reply_markup", lambda *a, **k: edits.append((a, k)))
+    monkeypatch.setattr(
+        recorder, "answer_callback_query",
+        lambda callback_id, text="", show_alert=False: answers.append((callback_id, text, show_alert)),
+    )
+
+    markup = {"inline_keyboard": [[{"text": "Skip", "callback_data": "skip:WATER:Unknown Plant"}]]}
+    request = FakeRequest(_callback_update("skip:WATER:Unknown Plant", markup=markup), secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    assert edits == []
+    assert answers[-1][2] is True
+
+
 def test_alldone_clears_entire_keyboard(monkeypatch):
     monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
     monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)

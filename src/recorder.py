@@ -55,7 +55,11 @@ def _handle_task(callback_id, chat_id, message_id, message, parsed):
 
 def _handle_skip(callback_id, chat_id, message_id, message, parsed):
     db = PlantDB()
-    db.clear_pending_action(parsed["plant"], parsed["action"])
+    found = db.clear_pending_action(parsed["plant"], parsed["action"])
+
+    if not found:
+        answer_callback_query(callback_id, text=f"Couldn't find '{parsed['plant']}'", show_alert=True)
+        return
 
     skipped_row = [{"text": "⏭ Skipped for today", "callback_data": "noop"}]
     new_markup = _replace_task_row(message["reply_markup"], parsed["action"], parsed["plant"], skipped_row)
