@@ -5,6 +5,7 @@ from src.weather import get_forecast
 from src.agent import PlantAgent
 from src.telegram_bot import send_message
 from src.actions import ACTION_ICONS
+from src.callbacks import encode_task_button, encode_skip_button, encode_alldone
 
 # Priority indicators
 PRIORITY_MARKERS = {
@@ -13,32 +14,41 @@ PRIORITY_MARKERS = {
     'LOW': '🟢',
 }
 
+# Past-tense labels for digest confirmation buttons
+ACTION_PAST_TENSE = {
+    'WATER': 'Watered',
+    'FERTILIZE': 'Fertilized',
+    'MIST': 'Misted',
+    'ROTATE': 'Rotated',
+    'MOVE': 'Moved',
+    'PRUNE': 'Pruned',
+    'REPOT': 'Repotted',
+    'CHECK': 'Checked',
+}
+
 
 def format_tasks(tasks, summary):
     """Format tasks into a readable Telegram message grouped by action type."""
     today = datetime.now().strftime("%Y-%m-%d")
     lines = [f"🌿 <b>Plant Care Tasks ({today})</b>"]
-    
+
     if summary:
         lines.append(f"<i>{summary}</i>")
-    
-    # Group tasks by action type
+
     by_action = {}
     for t in tasks:
         action = t.get('action', 'CHECK').upper()
         if action not in by_action:
             by_action[action] = []
         by_action[action].append(t)
-    
-    # Quick summary section - grouped by action
+
     lines.append("")
     for action in ['WATER', 'FERTILIZE', 'MIST', 'ROTATE', 'MOVE', 'PRUNE', 'REPOT', 'CHECK']:
         if action in by_action:
             icon = ACTION_ICONS.get(action, '📋')
             plant_names = [t.get('name', '?') for t in by_action[action]]
             lines.append(f"{icon} <b>{action}</b>: {', '.join(plant_names)}")
-    
-    # Detailed section with reasons and clickable commands
+
     lines.append("\n—")
     lines.append("<b>Details:</b>")
     for t in tasks:
@@ -48,27 +58,34 @@ def format_tasks(tasks, summary):
         reason = t.get('reason', '')
         priority = t.get('priority', '').upper()
         priority_marker = PRIORITY_MARKERS.get(priority, '')
-        
-        # Create clickable command (e.g. /water_monstera)
-        safe_name = "".join(c if c.isalnum() else "_" for c in name.lower())
-        safe_name = "_".join(filter(None, safe_name.split("_"))) # Remove duplicate underscores
-        command = f"/{action.lower()}_{safe_name}"
-        
         lines.append(f"{priority_marker}{icon} <b>{name}</b>: {reason}")
-        lines.append(f"   👉 Tap to log: {command}")
-    
-    lines.append("\n<i>Reply 'Done' to confirm all at once.</i>")
-    
+
     return "\n".join(lines)
+
+
+def build_digest_keyboard(tasks):
+    """Builds one button row per task (confirm / skip) plus a final mark-all-done row."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    rows = []
+    for t in tasks:
+        action = t.get('action', 'CHECK').upper()
+        name = t.get('name', 'Unknown')
+        icon = ACTION_ICONS.get(action, '📋')
+        label = ACTION_PAST_TENSE.get(action, action.title())
+        rows.append([
+            {"text": f"{icon} {label}", "callback_data": encode_task_button(action, name)},
+            {"text": "⏭ Skip today", "callback_data": encode_skip_button(action, name)},
+        ])
+    rows.append([{"text": "✅ Mark everything above done", "callback_data": encode_alldone(today)}])
+    return {"inline_keyboard": rows}
 
 
 def main():
     print(f"🌿 Starting Plant Care Advisor ({MODEL_ID})...")
 
-    # 1. Sync Mailbox (process user replies)
+    # 1. Connect to the Sheet
     try:
         db = PlantDB()
-        db.sync_from_mailbox()
     except Exception as e:
         print(f"❌ DB Init Failed: {e}")
         return
@@ -85,10 +102,11 @@ def main():
     agent = PlantAgent()
     tasks, summary = agent.get_tasks(weather, db.get_inventory(), care_history)
 
-    # 4. Notify & Update Status
+    # 5. Notify & Update Status
     if tasks:
         message = format_tasks(tasks, summary)
-        send_message(message)
+        keyboard = build_digest_keyboard(tasks)
+        send_message(message, reply_markup=keyboard)
         db.mark_pending(tasks)
         print(f"✅ Sent {len(tasks)} care recommendations.")
     else:
