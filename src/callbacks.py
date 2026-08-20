@@ -10,12 +10,12 @@ def encode_task_button(action, plant_name):
     return f"t:{action}:{plant_name}"
 
 
-def encode_skip_button(action, plant_name):
-    return f"skip:{action}:{plant_name}"
-
-
 def encode_alldone(date):
     return f"alldone:{date}"
+
+
+def encode_action_done(action, date):
+    return f"donetype:{action}:{date}"
 
 
 def encode_log_select(plant_name):
@@ -36,10 +36,10 @@ def decode_callback(data):
 
     if kind == "t" and len(parts) == 3:
         return {"kind": "task", "action": parts[1], "plant": parts[2]}
-    if kind == "skip" and len(parts) == 3:
-        return {"kind": "skip", "action": parts[1], "plant": parts[2]}
     if kind == "alldone" and len(parts) == 2:
         return {"kind": "alldone", "date": parts[1]}
+    if kind == "donetype" and len(parts) == 3:
+        return {"kind": "donetype", "action": parts[1], "date": parts[2]}
     if kind == "logsel" and len(parts) == 2:
         return {"kind": "logsel", "plant": parts[1]}
     if kind == "logact" and len(parts) == 3:

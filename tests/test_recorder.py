@@ -28,7 +28,7 @@ class FakePlantDB:
 
     def __init__(self):
         self.log_calls = []
-        self.skip_calls = []
+        self.donetype_calls = []
         self.alldone_calls = []
         FakePlantDB.instances.append(self)
 
@@ -36,9 +36,9 @@ class FakePlantDB:
         self.log_calls.append((plant_name, action))
         return plant_name != "Unknown Plant"
 
-    def clear_pending_action(self, plant_name, action):
-        self.skip_calls.append((plant_name, action))
-        return True
+    def mark_action_done(self, action, date=None):
+        self.donetype_calls.append((action, date))
+        return 2
 
     def mark_all_done(self, date=None):
         self.alldone_calls.append(date)
@@ -166,7 +166,7 @@ def test_task_button_logs_action_and_confirms(monkeypatch):
     )
 
     markup = {"inline_keyboard": [
-        [{"text": "Watered", "callback_data": "t:WATER:Monstera"}, {"text": "Skip", "callback_data": "skip:WATER:Monstera"}],
+        [{"text": "Watered", "callback_data": "t:WATER:Monstera"}],
         [{"text": "Mark all done", "callback_data": "alldone:2026-08-19"}],
     ]}
     request = FakeRequest(_callback_update("t:WATER:Monstera", markup=markup), secret="test-secret")
@@ -201,7 +201,7 @@ def test_task_button_shows_error_when_plant_not_found(monkeypatch):
     assert answers[-1][2] is True
 
 
-def test_skip_button_clears_without_logging(monkeypatch):
+def test_donetype_marks_matching_rows_and_bulk_button_done(monkeypatch):
     monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
     monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
     edits = []
@@ -211,44 +211,44 @@ def test_skip_button_clears_without_logging(monkeypatch):
     )
     monkeypatch.setattr(recorder, "answer_callback_query", lambda *a, **k: None)
 
-    markup = {"inline_keyboard": [[
-        {"text": "Watered", "callback_data": "t:WATER:Pothos"},
-        {"text": "Skip", "callback_data": "skip:WATER:Pothos"},
-    ]]}
-    request = FakeRequest(_callback_update("skip:WATER:Pothos", markup=markup), secret="test-secret")
+    today = datetime.now().strftime("%Y-%m-%d")
+    markup = {"inline_keyboard": [
+        [{"text": "Water Monstera", "callback_data": "t:WATER:Monstera"}],
+        [{"text": "Rotate Pothos", "callback_data": "t:ROTATE:Pothos"}],
+        [{"text": "Mark watering complete", "callback_data": f"donetype:WATER:{today}"}],
+        [{"text": "Mark everything above done", "callback_data": f"alldone:{today}"}],
+    ]}
+    request = FakeRequest(_callback_update(f"donetype:WATER:{today}", markup=markup), secret="test-secret")
 
     recorder.telegram_webhook(request)
 
-    assert FakePlantDB.instances[-1].skip_calls == [("Pothos", "WATER")]
-    assert edits[-1]["inline_keyboard"][0] == [{"text": "⏭ Skipped for today", "callback_data": "noop"}]
+    assert FakePlantDB.instances[-1].donetype_calls == [("WATER", today)]
+    rows = edits[-1]["inline_keyboard"]
+    assert rows[0] == [{"text": "✓ Logged just now", "callback_data": "noop"}]
+    assert rows[1] == markup["inline_keyboard"][1]
+    assert rows[2] == [{"text": "✓ Logged just now", "callback_data": "noop"}]
+    assert rows[3] == markup["inline_keyboard"][3]
 
 
-def test_skip_button_shows_error_when_plant_not_found(monkeypatch):
+def test_donetype_from_a_previous_days_digest_is_refused(monkeypatch):
     monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
     monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
-
-    class NotFoundPlantDB(FakePlantDB):
-        def clear_pending_action(self, plant_name, action):
-            self.skip_calls.append((plant_name, action))
-            return False
-
-    monkeypatch.setattr(recorder, "PlantDB", NotFoundPlantDB)
-
     edits = []
     answers = []
     monkeypatch.setattr(recorder, "edit_message_reply_markup", lambda *a, **k: edits.append((a, k)))
     monkeypatch.setattr(
         recorder, "answer_callback_query",
-        lambda callback_id, text="", show_alert=False: answers.append((callback_id, text, show_alert)),
+        lambda callback_id, text="", show_alert=False: answers.append((text, show_alert)),
     )
 
-    markup = {"inline_keyboard": [[{"text": "Skip", "callback_data": "skip:WATER:Unknown Plant"}]]}
-    request = FakeRequest(_callback_update("skip:WATER:Unknown Plant", markup=markup), secret="test-secret")
+    request = FakeRequest(_callback_update("donetype:WATER:2020-01-01"), secret="test-secret")
 
     recorder.telegram_webhook(request)
 
+    assert FakePlantDB.instances == []
     assert edits == []
-    assert answers[-1][2] is True
+    assert "previous day" in answers[-1][0]
+    assert answers[-1][1] is True
 
 
 def test_alldone_clears_entire_keyboard(monkeypatch):

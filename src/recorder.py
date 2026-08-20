@@ -4,7 +4,6 @@ from src.actions import CARE_ACTIONS, ACTION_ICONS
 from src.callbacks import (
     decode_callback,
     encode_task_button,
-    encode_skip_button,
     encode_log_select,
     encode_log_action,
     encode_log_back,
@@ -71,10 +70,10 @@ def _handle_callback(callback_query):
 
     if kind == "task":
         _handle_task(callback_id, chat_id, message_id, message, parsed)
-    elif kind == "skip":
-        _handle_skip(callback_id, chat_id, message_id, message, parsed)
     elif kind == "alldone":
         _handle_alldone(callback_id, chat_id, message_id, parsed)
+    elif kind == "donetype":
+        _handle_donetype(callback_id, chat_id, message_id, message, parsed)
     elif kind == "logsel":
         _handle_logsel(callback_id, chat_id, message_id, parsed)
     elif kind == "logact":
@@ -101,20 +100,6 @@ def _handle_task(callback_id, chat_id, message_id, message, parsed):
     answer_callback_query(callback_id, text=f"🌿 Logged: {parsed['action'].title()} {parsed['plant']}")
 
 
-def _handle_skip(callback_id, chat_id, message_id, message, parsed):
-    db = PlantDB()
-    found = db.clear_pending_action(parsed["plant"], parsed["action"])
-
-    if not found:
-        answer_callback_query(callback_id, text=f"Couldn't find '{parsed['plant']}'", show_alert=True)
-        return
-
-    skipped_row = [{"text": "⏭ Skipped for today", "callback_data": "noop"}]
-    new_markup = _replace_task_row(message["reply_markup"], parsed["action"], parsed["plant"], skipped_row)
-    edit_message_reply_markup(chat_id, message_id, new_markup)
-    answer_callback_query(callback_id, text=f"Skipped {parsed['plant']} for today")
-
-
 def _handle_alldone(callback_id, chat_id, message_id, parsed):
     # mark_all_done() acts on whatever is pending *now*, which may have become
     # pending after this digest was sent. Applying a stale digest's date to it
@@ -134,15 +119,49 @@ def _handle_alldone(callback_id, chat_id, message_id, parsed):
     answer_callback_query(callback_id, text=f"✅ Marked {count} plant(s) done")
 
 
+def _handle_donetype(callback_id, chat_id, message_id, message, parsed):
+    # mark_action_done() acts on whatever is pending *now* for this action, which
+    # may have changed since this digest was sent -- same staleness risk as alldone.
+    if parsed["date"] != datetime.now().strftime('%Y-%m-%d'):
+        answer_callback_query(
+            callback_id,
+            text="This digest is from a previous day — reply isn't supported anymore, check today's message instead.",
+            show_alert=True,
+        )
+        return
+
+    db = PlantDB()
+    count = db.mark_action_done(parsed["action"], date=parsed["date"])
+
+    new_markup = _replace_action_rows(message["reply_markup"], parsed["action"])
+    edit_message_reply_markup(chat_id, message_id, new_markup)
+    answer_callback_query(callback_id, text=f"✅ Marked {count} plant(s) done")
+
+
 def _replace_task_row(current_markup, action, plant_name, new_row):
     """Returns a new keyboard with the row for (action, plant_name) replaced by new_row."""
     task_data = encode_task_button(action, plant_name)
-    skip_data = encode_skip_button(action, plant_name)
     updated_rows = []
     for row in current_markup.get("inline_keyboard", []):
         row_data = [btn.get("callback_data") for btn in row]
-        if task_data in row_data or skip_data in row_data:
+        if task_data in row_data:
             updated_rows.append(new_row)
+        else:
+            updated_rows.append(row)
+    return {"inline_keyboard": updated_rows}
+
+
+def _replace_action_rows(current_markup, action):
+    """Collapses every row for this action -- individual task buttons and the
+    bulk "Mark X complete" button itself -- into inert done markers."""
+    done_row = [{"text": "✓ Logged just now", "callback_data": "noop"}]
+    task_prefix = f"t:{action}:"
+    donetype_prefix = f"donetype:{action}:"
+    updated_rows = []
+    for row in current_markup.get("inline_keyboard", []):
+        row_data = [btn.get("callback_data") or "" for btn in row]
+        if any(cd.startswith(task_prefix) or cd.startswith(donetype_prefix) for cd in row_data):
+            updated_rows.append(done_row)
         else:
             updated_rows.append(row)
     return {"inline_keyboard": updated_rows}

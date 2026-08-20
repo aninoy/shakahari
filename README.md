@@ -173,33 +173,36 @@ covers a personal bot's traffic.
 
 ### The Daily Notification
 
-Every morning, if action is required, Shakahari sends you a digest grouped by action type:
+Every morning, if action is required, Shakahari sends you a compact digest —
+one line per task showing a deterministic days-since-vs-threshold code
+instead of a full sentence, so a large backlog stays scannable:
 
 > 🌿 **Plant Care Tasks (2026-01-22)**  
 >_All plants generally healthy._
 >
-> 💧 **WATER**: Monstera, Peace Lily, Fern  
-> 🔄 **ROTATE**: Pothos  
-> 🧪 **FERTILIZE**: Fiddle Leaf 
->
-> **Details:**  
-> 🔴💧 **Monstera**: Soil dry after 8 days, indoor heat accelerates drying  
-> 🟡💧 **Peace Lily**: Low humidity environment needs more frequent watering  
-> 🟢🔄 **Pothos**: Leaves leaning toward window, rotate for even growth
->
-> _(Buttons under the message allow you to log these actions instantly)_  
+> 🔴💧 **Monstera** — 12d≥10d  
+> 🟡💧 **Peace Lily** — 18d≥14d  
+> 🟢🔄 **Pothos** — 9d≥7d  
+
+Each line has its own named button underneath (e.g. "💧 Water Monstera"),
+plus a "Mark watering complete" / "Mark rotating complete" style button per
+action type actually present, and a final "Mark everything above done".
 
 ### Interacting with the Bot
 
-Every task in the daily digest has its own buttons:
+Every task in the daily digest has its own named button:
 
-- **Tap the action button** (e.g. "💧 Watered") to log it instantly — the
-  button changes to a checkmark and a toast confirms it, all within the
+- **Tap a task's button** (e.g. "💧 Water Monstera") to log it instantly —
+  the button changes to a checkmark and a toast confirms it, all within the
   same message. Nothing new is added to the chat, so you never lose your
   scroll position.
-- **Tap "⏭ Skip today"** to clear that task without logging it as done —
-  the agent will reconsider it fresh tomorrow.
+- **Tap "Mark watering complete"** (or fertilizing / rotating / etc. — one
+  button per action type actually in today's digest) to confirm every plant
+  currently needing that action in one tap.
 - **Tap "✅ Mark everything above done"** to confirm every pending task at once.
+- Not doing something today? Just don't tap its button — there's no
+  separate "skip" action; the agent reconsiders anything still pending
+  again tomorrow.
 
 **Logging anything else:** send `/log` at any time to log an action that
 wasn't on the digest — pick a plant, then pick what you did. This works

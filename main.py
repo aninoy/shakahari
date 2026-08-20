@@ -4,8 +4,8 @@ from src.storage import PlantDB
 from src.weather import get_forecast
 from src.agent import PlantAgent
 from src.telegram_bot import send_message
-from src.actions import ACTION_ICONS
-from src.callbacks import encode_task_button, encode_skip_button, encode_alldone
+from src.actions import ACTION_ICONS, ACTION_GERUNDS, CARE_ACTIONS
+from src.callbacks import encode_task_button, encode_alldone, encode_action_done
 from src.recorder import telegram_webhook  # noqa: F401 -- Cloud Function entry point, unused by the Advisor
 
 # Priority indicators
@@ -15,68 +15,66 @@ PRIORITY_MARKERS = {
     'LOW': '🟢',
 }
 
-# Past-tense labels for digest confirmation buttons
-ACTION_PAST_TENSE = {
-    'WATER': 'Watered',
-    'FERTILIZE': 'Fertilized',
-    'MIST': 'Misted',
-    'ROTATE': 'Rotated',
-    'MOVE': 'Moved',
-    'PRUNE': 'Pruned',
-    'REPOT': 'Repotted',
-    'CHECK': 'Checked',
-}
-
 
 def format_tasks(tasks, summary):
-    """Format tasks into a readable Telegram message grouped by action type."""
+    """Format tasks into a compact digest: one line per task showing a
+    deterministic days-since-vs-threshold code instead of Gemini's prose."""
     today = datetime.now().strftime("%Y-%m-%d")
     lines = [f"🌿 <b>Plant Care Tasks ({today})</b>"]
 
     if summary:
         lines.append(f"<i>{summary}</i>")
 
-    by_action = {}
-    for t in tasks:
-        action = t.get('action', 'CHECK').upper()
-        if action not in by_action:
-            by_action[action] = []
-        by_action[action].append(t)
-
     lines.append("")
-    for action in ['WATER', 'FERTILIZE', 'MIST', 'ROTATE', 'MOVE', 'PRUNE', 'REPOT', 'CHECK']:
-        if action in by_action:
-            icon = ACTION_ICONS.get(action, '📋')
-            plant_names = [t.get('name', '?') for t in by_action[action]]
-            lines.append(f"{icon} <b>{action}</b>: {', '.join(plant_names)}")
-
-    lines.append("\n—")
-    lines.append("<b>Details:</b>")
     for t in tasks:
-        action = t.get('action', 'CHECK').upper()
-        icon = ACTION_ICONS.get(action, '📋')
-        name = t.get('name', 'Unknown')
-        reason = t.get('reason', '')
-        priority = t.get('priority', '').upper()
-        priority_marker = PRIORITY_MARKERS.get(priority, '')
-        lines.append(f"{priority_marker}{icon} <b>{name}</b>: {reason}")
+        lines.append(_format_task_line(t))
 
     return "\n".join(lines)
 
 
+def _format_task_line(t):
+    action = t.get('action', 'CHECK').upper()
+    icon = ACTION_ICONS.get(action, '📋')
+    name = t.get('name', 'Unknown')
+    priority = t.get('priority', '').upper()
+    marker = PRIORITY_MARKERS.get(priority, '')
+
+    days = t.get('days_since')
+    threshold = t.get('threshold')
+    if days is None:
+        code = "never"
+    elif threshold:
+        code = f"{days}d≥{threshold}d"
+    else:
+        code = f"{days}d"
+
+    return f"{marker}{icon} <b>{name}</b> — {code}"
+
+
 def build_digest_keyboard(tasks):
-    """Builds one button row per task (confirm / skip) plus a final mark-all-done row."""
+    """One named button per task, one bulk "Mark X complete" button per action
+    type present, plus a final mark-everything row."""
     today = datetime.now().strftime("%Y-%m-%d")
     rows = []
+    present_actions = []
     for t in tasks:
         action = t.get('action', 'CHECK').upper()
         name = t.get('name', 'Unknown')
         icon = ACTION_ICONS.get(action, '📋')
-        label = ACTION_PAST_TENSE.get(action, action.title())
         rows.append([
-            {"text": f"{icon} {label}", "callback_data": encode_task_button(action, name)},
-            {"text": "⏭ Skip today", "callback_data": encode_skip_button(action, name)},
+            {"text": f"{icon} {action.title()} {name}", "callback_data": encode_task_button(action, name)},
         ])
+        if action not in present_actions:
+            present_actions.append(action)
+
+    for action in CARE_ACTIONS:
+        if action in present_actions:
+            icon = ACTION_ICONS.get(action, '📋')
+            gerund = ACTION_GERUNDS.get(action, action.lower())
+            rows.append([
+                {"text": f"{icon} Mark {gerund} complete", "callback_data": encode_action_done(action, today)},
+            ])
+
     rows.append([{"text": "✅ Mark everything above done", "callback_data": encode_alldone(today)}])
     return {"inline_keyboard": rows}
 

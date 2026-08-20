@@ -65,14 +65,34 @@ def test_log_task_action_keeps_other_pending_actions():
     assert db.df.at[0, "Status"] == "PENDING_ROTATE"
 
 
-def test_clear_pending_action_does_not_write_history():
-    db = make_db([{"Name": "Fern", "Last Watered": "", "Last Fertilized": "", "Status": "PENDING_WATER"}])
+def test_mark_action_done_logs_every_plant_pending_that_action():
+    db = make_db([
+        {"Name": "Monstera", "Last Watered": "", "Last Fertilized": "", "Status": "PENDING_WATER"},
+        {"Name": "Pothos", "Last Watered": "", "Last Fertilized": "", "Status": "PENDING_ROTATE"},
+        {"Name": "Fern", "Last Watered": "", "Last Fertilized": "", "Status": "PENDING_WATER_ROTATE"},
+    ])
 
-    found = db.clear_pending_action("Fern", "WATER")
+    updated = db.mark_action_done("WATER", date="2026-08-20")
 
-    assert found is True
+    assert updated == 2
     assert db.df.at[0, "Status"] == "OK"
-    assert db.history_ws.appended_rows == []
+    assert db.df.at[0, "Last Watered"] == "2026-08-20"
+    assert db.df.at[1, "Status"] == "PENDING_ROTATE"  # untouched -- different action
+    assert db.df.at[2, "Status"] == "PENDING_ROTATE"  # WATER cleared, ROTATE remains
+    assert db.df.at[2, "Last Watered"] == "2026-08-20"
+    logged = {(r[1], r[2]) for r in db.history_ws.appended_rows}
+    assert ("Monstera", "WATER") in logged
+    assert ("Fern", "WATER") in logged
+    assert ("Pothos", "WATER") not in logged
+
+
+def test_mark_action_done_returns_zero_and_skips_save_when_nothing_pending():
+    db = make_db([{"Name": "Fern", "Last Watered": "", "Last Fertilized": "", "Status": "OK"}])
+
+    updated = db.mark_action_done("WATER", date="2026-08-20")
+
+    assert updated == 0
+    assert db.worksheet.updated is None
 
 
 def test_mark_all_done_logs_every_pending_plant():

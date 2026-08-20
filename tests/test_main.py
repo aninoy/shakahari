@@ -6,32 +6,63 @@ import main as main_module
 from main import format_tasks, build_digest_keyboard
 
 
-def test_format_tasks_has_no_tap_to_log_text():
-    tasks = [{"name": "Monstera", "action": "WATER", "priority": "HIGH", "reason": "Soil dry"}]
+def test_format_tasks_is_compact_with_a_days_since_code_not_prose():
+    tasks = [{
+        "name": "Monstera", "action": "WATER", "priority": "HIGH",
+        "reason": "Soil dry after 8 days, indoor heat accelerates drying",
+        "days_since": 12, "threshold": 10,
+    }]
 
     text = format_tasks(tasks, "All good")
 
     assert "Tap to log" not in text
     assert "/water_monstera" not in text
+    assert "Soil dry" not in text
     assert "Monstera" in text
-    assert "Soil dry" in text
+    assert "12d≥10d" in text
 
 
-def test_build_digest_keyboard_has_one_row_per_task_plus_mark_all_done():
+def test_format_tasks_shows_never_when_no_history_exists():
+    tasks = [{"name": "Fern", "action": "CHECK", "priority": "LOW", "days_since": None, "threshold": 3}]
+
+    text = format_tasks(tasks, "")
+
+    assert "never" in text
+
+
+def test_build_digest_keyboard_buttons_name_the_plant_with_no_skip_option():
     tasks = [
-        {"name": "Monstera", "action": "WATER", "priority": "HIGH", "reason": "Soil dry"},
-        {"name": "Pothos", "action": "ROTATE", "priority": "LOW", "reason": "Leaning"},
+        {"name": "Monstera", "action": "WATER", "priority": "HIGH", "days_since": 12, "threshold": 10},
+        {"name": "Pothos", "action": "ROTATE", "priority": "LOW", "days_since": 9, "threshold": 7},
     ]
 
     keyboard = build_digest_keyboard(tasks)
     rows = keyboard["inline_keyboard"]
 
-    assert len(rows) == 3
-    assert rows[0][0] == {"text": "💧 Watered", "callback_data": "t:WATER:Monstera"}
-    assert rows[0][1] == {"text": "⏭ Skip today", "callback_data": "skip:WATER:Monstera"}
-    assert rows[1][0] == {"text": "🔄 Rotated", "callback_data": "t:ROTATE:Pothos"}
+    assert rows[0] == [{"text": "💧 Water Monstera", "callback_data": "t:WATER:Monstera"}]
+    assert rows[1] == [{"text": "🔄 Rotate Pothos", "callback_data": "t:ROTATE:Pothos"}]
+    task_rows = rows[:2]
+    for row in task_rows:
+        assert len(row) == 1
+
+
+def test_build_digest_keyboard_adds_one_bulk_button_per_action_present():
+    tasks = [
+        {"name": "Monstera", "action": "WATER", "priority": "HIGH", "days_since": 12, "threshold": 10},
+        {"name": "Fern", "action": "WATER", "priority": "LOW", "days_since": 15, "threshold": 10},
+        {"name": "Pothos", "action": "ROTATE", "priority": "LOW", "days_since": 9, "threshold": 7},
+    ]
+
+    keyboard = build_digest_keyboard(tasks)
+    rows = keyboard["inline_keyboard"]
     today = datetime.now().strftime("%Y-%m-%d")
-    assert rows[2] == [{"text": "✅ Mark everything above done", "callback_data": f"alldone:{today}"}]
+
+    bulk_rows = [r for r in rows if r[0]["callback_data"].startswith("donetype:")]
+    assert bulk_rows == [
+        [{"text": "💧 Mark watering complete", "callback_data": f"donetype:WATER:{today}"}],
+        [{"text": "🔄 Mark rotating complete", "callback_data": f"donetype:ROTATE:{today}"}],
+    ]
+    assert rows[-1] == [{"text": "✅ Mark everything above done", "callback_data": f"alldone:{today}"}]
 
 
 class FakePlantDB:

@@ -110,17 +110,29 @@ class PlantDB:
         self.save()
         return True
 
-    def clear_pending_action(self, plant_name, action):
-        """Clear a pending action for an exact plant name WITHOUT logging it as done.
-        Returns True if the plant was found, False otherwise."""
-        mask = self.df['Name'].str.lower() == plant_name.strip().lower()
-        if not mask.any():
-            return False
+    def mark_action_done(self, action, date=None):
+        """Confirm one specific action across every plant currently pending it.
+        Returns the number of plants updated."""
+        if not date:
+            date = datetime.now().strftime('%Y-%m-%d')
 
-        idx = self.df[mask].index[0]
-        self._clear_pending(idx, action)
-        self.save()
-        return True
+        mask_pending = self.df['Status'].str.contains(f'PENDING_{action}', na=False, regex=False)
+        updated = 0
+        for idx, row in self.df[mask_pending].iterrows():
+            plant_name = row['Name']
+
+            if action == 'WATER':
+                self.df.at[idx, 'Last Watered'] = date
+            elif action == 'FERTILIZE':
+                self.df.at[idx, 'Last Fertilized'] = date
+
+            self.log_action(plant_name, action, date=date, notes='Confirmed via Mark action complete')
+            self._clear_pending(idx, action)
+            updated += 1
+
+        if updated:
+            self.save()
+        return updated
 
     def _clear_pending(self, idx, action):
         """Remove one action from a row's composite PENDING_ status string."""

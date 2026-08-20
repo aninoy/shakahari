@@ -21,3 +21,15 @@ ACTION_ICONS = {
     "REPOT": "🪴",
     "CHECK": "🔍",
 }
+
+# Gerunds for bulk "Mark X complete" digest buttons.
+ACTION_GERUNDS = {
+    "WATER": "watering",
+    "FERTILIZE": "fertilizing",
+    "MIST": "misting",
+    "ROTATE": "rotating",
+    "MOVE": "moving",
+    "PRUNE": "pruning",
+    "REPOT": "repotting",
+    "CHECK": "checking",
+}
