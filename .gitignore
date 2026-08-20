@@ -3,3 +3,4 @@
 credentials*
 __pycache__
 playground*.json
+.worktrees
