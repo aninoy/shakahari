@@ -7,6 +7,7 @@ load_dotenv()
 # API Keys & Secrets
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TELEGRAM_WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SHEET_CREDENTIALS = os.environ.get("G_SHEET_CREDENTIALS")
 PERENUAL_API_KEY = os.environ.get("PERENUAL_API_KEY")
