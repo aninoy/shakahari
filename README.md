@@ -36,7 +36,12 @@ flowchart TD
 
 You will need free accounts for the following services:
 
-1. **Google Cloud Project:** For the Gemini API and Google Sheets API.
+1. **Google Cloud Project:** For the Gemini API, Google Sheets API, and the
+   Cloud Function that handles real-time logging. Cloud Functions (gen2)
+   require a **billing account attached** to the project — even to stay
+   within the free tier — so link one in the
+   [Cloud Console billing page](https://console.cloud.google.com/billing)
+   before deploying (see "Real-Time Logging Setup" below).
 2. **Telegram:** To create the bot.
 3. **GitHub:** To host the code and run the runner.
 
@@ -105,11 +110,19 @@ once-a-day GitHub Actions cron can't do. A small always-on Cloud Function
 handles this instead — Google's free tier (2M invocations/month) comfortably
 covers a personal bot's traffic.
 
-1. **Generate a webhook secret** (any random string) and add it to your
-   `.env` as `TELEGRAM_WEBHOOK_SECRET`, and to your shell environment (the
-   `setWebhook` call in step 4 reads it from there).
+1. **Enable the required APIs** on your project (one-time):
 
-2. **Create an `env.yaml`** in the repo root holding the function's four
+   ```bash
+   gcloud services enable cloudfunctions.googleapis.com run.googleapis.com \
+     cloudbuild.googleapis.com artifactregistry.googleapis.com
+   ```
+
+2. **Generate a webhook secret** (any random string, e.g.
+   `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`) and add
+   it to your `.env` as `TELEGRAM_WEBHOOK_SECRET`, and to your shell
+   environment (the `setWebhook` call in step 5 reads it from there).
+
+3. **Create an `env.yaml`** in the repo root holding the function's four
    environment variables:
 
    ```yaml
@@ -128,7 +141,7 @@ covers a personal bot's traffic.
    > ⚠️ **Never commit `env.yaml`** — it holds your bot token and your service
    > account's private key. It is already listed in `.gitignore`.
 
-3. **Deploy the function** (from the repo root):
+4. **Deploy the function** (from the repo root):
 
    ```bash
    gcloud functions deploy shakahari-recorder \
@@ -142,9 +155,20 @@ covers a personal bot's traffic.
      --env-vars-file=env.yaml
    ```
 
-   Note the `httpsTrigger.url` printed at the end — you'll need it next.
+   The output lists two different URLs — grab **`serviceConfig.uri`** (a
+   `.run.app` address), not the legacy `cloudfunctions.net` URL also shown.
+   You can fetch it on its own later with:
 
-4. **Register the webhook with Telegram:**
+   ```bash
+   gcloud functions describe shakahari-recorder --gen2 --region=us-west1 \
+     --format="value(serviceConfig.uri)"
+   ```
+
+   Re-run this same `deploy` command any time you change `src/recorder.py`
+   or `env.yaml` — environment variables are baked in at deploy time, they
+   don't hot-reload.
+
+5. **Register the webhook with Telegram:**
 
    ```bash
    curl -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook" \
@@ -152,7 +176,7 @@ covers a personal bot's traffic.
      -d "secret_token=${TELEGRAM_WEBHOOK_SECRET}"
    ```
 
-5. **Verify it's registered:**
+6. **Verify it's registered:**
 
    ```bash
    curl "https://api.telegram.org/bot${TELEGRAM_TOKEN}/getWebhookInfo"
@@ -174,15 +198,16 @@ covers a personal bot's traffic.
 ### The Daily Notification
 
 Every morning, if action is required, Shakahari sends you a compact digest —
-one line per task showing a deterministic days-since-vs-threshold code
-instead of a full sentence, so a large backlog stays scannable:
+one line per task showing how overdue it is and how often that care is
+normally needed, instead of a full sentence, so a large backlog stays
+scannable:
 
 > 🌿 **Plant Care Tasks (2026-01-22)**  
 >_All plants generally healthy._
 >
-> 🔴💧 **Monstera** — 12d≥10d  
-> 🟡💧 **Peace Lily** — 18d≥14d  
-> 🟢🔄 **Pothos** — 9d≥7d  
+> 🔴💧 **Monstera** — 12d overdue · 🔁10d  
+> 🟡💧 **Peace Lily** — 4d overdue · 🔁14d  
+> 🟢🔄 **Pothos** — 2d overdue · 🔁7d  
 
 Each line has its own named button underneath (e.g. "💧 Water Monstera"),
 plus a "Mark watering complete" / "Mark rotating complete" style button per
@@ -193,9 +218,9 @@ action type actually present, and a final "Mark everything above done".
 Every task in the daily digest has its own named button:
 
 - **Tap a task's button** (e.g. "💧 Water Monstera") to log it instantly —
-  the button changes to a checkmark and a toast confirms it, all within the
-  same message. Nothing new is added to the chat, so you never lose your
-  scroll position.
+  the button changes to show exactly what was logged and when (e.g.
+  "✓ Water Monstera — 2026-08-20"), and a toast confirms it. Nothing new is
+  added to the chat, so you never lose your scroll position.
 - **Tap "Mark watering complete"** (or fertilizing / rotating / etc. — one
   button per action type actually in today's digest) to confirm every plant
   currently needing that action in one tap.
@@ -217,12 +242,16 @@ independently of whatever the agent last recommended.
 /
 ├── .github/workflows/   # Cron schedule configuration
 ├── src/
+│   ├── actions.py       # Shared action constants (icons, gerunds, care types)
 │   ├── agent.py         # Gemini AI Logic (Prompt Engineering)
+│   ├── callbacks.py     # Telegram callback_data encode/decode
 │   ├── config.py        # Configuration & Env Vars
+│   ├── plant_api.py     # Perenual API + Gemini-grounded care lookups
 │   ├── storage.py       # Google Sheets DB & Care Logging
 │   ├── telegram_bot.py  # Notification Service
 │   ├── recorder.py      # Cloud Function for Real-Time Logging
 │   └── weather.py       # Open-Meteo Integration
+├── tests/               # pytest suite
 ├── main.py              # Entry point (Advisor cron job)
 └── requirements.txt     # Python dependencies
 ```
