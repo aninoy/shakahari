@@ -106,10 +106,29 @@ handles this instead — Google's free tier (2M invocations/month) comfortably
 covers a personal bot's traffic.
 
 1. **Generate a webhook secret** (any random string) and add it to your
-   `.env` as `TELEGRAM_WEBHOOK_SECRET`, and to your shell environment before
-   deploying.
+   `.env` as `TELEGRAM_WEBHOOK_SECRET`, and to your shell environment (the
+   `setWebhook` call in step 4 reads it from there).
 
-2. **Deploy the function** (from the repo root):
+2. **Create an `env.yaml`** in the repo root holding the function's four
+   environment variables:
+
+   ```yaml
+   TELEGRAM_TOKEN: "123456789:AA-your-bot-token"
+   TELEGRAM_CHAT_ID: "987654321"
+   TELEGRAM_WEBHOOK_SECRET: "your-random-webhook-secret"
+   G_SHEET_CREDENTIALS: '{"type": "service_account", "project_id": "your-project", "private_key": "-----BEGIN PRIVATE KEY-----\nMII...\n-----END PRIVATE KEY-----\n", "client_email": "shakahari@your-project.iam.gserviceaccount.com", "token_uri": "https://oauth2.googleapis.com/token"}'
+   ```
+
+   Keep `G_SHEET_CREDENTIALS` on one line in **single** quotes — single-quoted
+   YAML passes the JSON's `\n` escapes through untouched, which the private key
+   needs. (A file is required rather than `--set-env-vars` because that flag
+   splits on commas, and the service-account JSON is full of them — gcloud fails
+   with `Bad syntax for dict arg` before it ever reaches the API.)
+
+   > ⚠️ **Never commit `env.yaml`** — it holds your bot token and your service
+   > account's private key. It is already listed in `.gitignore`.
+
+3. **Deploy the function** (from the repo root):
 
    ```bash
    gcloud functions deploy shakahari-recorder \
@@ -120,12 +139,12 @@ covers a personal bot's traffic.
      --entry-point=telegram_webhook \
      --trigger-http \
      --allow-unauthenticated \
-     --set-env-vars=TELEGRAM_TOKEN="$TELEGRAM_TOKEN",TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID",G_SHEET_CREDENTIALS="$G_SHEET_CREDENTIALS",TELEGRAM_WEBHOOK_SECRET="$TELEGRAM_WEBHOOK_SECRET"
+     --env-vars-file=env.yaml
    ```
 
    Note the `httpsTrigger.url` printed at the end — you'll need it next.
 
-3. **Register the webhook with Telegram:**
+4. **Register the webhook with Telegram:**
 
    ```bash
    curl -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook" \
@@ -133,7 +152,7 @@ covers a personal bot's traffic.
      -d "secret_token=${TELEGRAM_WEBHOOK_SECRET}"
    ```
 
-4. **Verify it's registered:**
+5. **Verify it's registered:**
 
    ```bash
    curl "https://api.telegram.org/bot${TELEGRAM_TOKEN}/getWebhookInfo"
@@ -145,6 +164,10 @@ covers a personal bot's traffic.
 > A webhook and `getUpdates` polling are mutually exclusive — once this is
 > registered, nothing in this repo calls `getUpdates` anymore (the Advisor's
 > `sync_from_mailbox()` was removed for exactly this reason).
+
+> The secret token only proves an update came from Telegram, not who sent it, so
+> the Recorder additionally ignores anything that isn't from `TELEGRAM_CHAT_ID`.
+> If buttons and `/log` do nothing, check that value first.
 
 ## 📱 Usage Guide
 
