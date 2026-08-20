@@ -11,7 +11,7 @@ Unlike simple timer apps, Shakahari uses **Gemini 2.5 Flash** (AI), **Open-Meteo
 - **📅 Days Tracking:** Calculates days since each action type (WATER, MIST, ROTATE, etc.) from CareHistory.
 - **🛡️ Safety Filters:** Won't recommend watering if < 3 days since last watering, rotating if < 7 days, etc.
 - **🌦️ Weather Integrated:** Automatically skips watering outdoor plants if it rained.
-- **💬 Two-Way Feedback:** Receive tasks via **Telegram**. Reply with "Done" or "Watered Fern, Rotated Pothos" for composite updates.
+- **💬 Instant Feedback:** Receive daily digest via **Telegram**. Tap buttons to log actions instantly, or send `/log` anytime to log actions not on the digest.
 - **📂 Serverless:** Runs on a scheduled GitHub Action (Cron). No AWS/GCP bills.
 
 
@@ -20,14 +20,16 @@ Unlike simple timer apps, Shakahari uses **Gemini 2.5 Flash** (AI), **Open-Meteo
 ```mermaid
 flowchart TD
     A[Daily Trigger] -->|1. Wake Up| B[Main Script]
-    B -->|2. Check Mailbox| C[Telegram API]
-    C -->|User Replies| D[Update Google Sheet]
-    B -->|3. Get Context| E[Fetch Weather]
-    B -->|4. Get Inventory| F[Google Sheets DB]
-    B -->|5. Ask Agent| G[Gemini AI]
-    G -->|6. Decisions| H{Tasks Needed}
-    H -->|Yes| I[Send Telegram Alert]
-    H -->|No| J[Sleep]
+    B -->|2. Get Context| C[Fetch Weather]
+    B -->|3. Get Inventory| D[Google Sheets DB]
+    B -->|4. Ask Agent| E[Gemini AI]
+    E -->|5. Decisions| F{Tasks Needed}
+    F -->|Yes| G[Send Telegram Digest]
+    F -->|No| H[Sleep]
+    
+    I[User Taps Button/Sends /log] -->|Instant| J[Cloud Function Webhook]
+    J -->|Update| K[Google Sheets DB]
+    G -.->|Includes Buttons| I
 ```
 
 ## 🛠️ Prerequisites
@@ -96,48 +98,118 @@ SHEET_NAME = "ShakahariDB" # The google sheet name
 
 Push your code to GitHub. The workflow is defined in `.github/workflows/daily.yml` and is set to run automatically every morning (default: 14:00 UTC).
 
+### 6. Real-Time Logging Setup (Google Cloud Function)
+
+Digest buttons and `/log` need to be acknowledged within seconds, which the
+once-a-day GitHub Actions cron can't do. A small always-on Cloud Function
+handles this instead — Google's free tier (2M invocations/month) comfortably
+covers a personal bot's traffic.
+
+1. **Generate a webhook secret** (any random string) and add it to your
+   `.env` as `TELEGRAM_WEBHOOK_SECRET`, and to your shell environment (the
+   `setWebhook` call in step 4 reads it from there).
+
+2. **Create an `env.yaml`** in the repo root holding the function's four
+   environment variables:
+
+   ```yaml
+   TELEGRAM_TOKEN: "123456789:AA-your-bot-token"
+   TELEGRAM_CHAT_ID: "987654321"
+   TELEGRAM_WEBHOOK_SECRET: "your-random-webhook-secret"
+   G_SHEET_CREDENTIALS: '{"type": "service_account", "project_id": "your-project", "private_key": "-----BEGIN PRIVATE KEY-----\nMII...\n-----END PRIVATE KEY-----\n", "client_email": "shakahari@your-project.iam.gserviceaccount.com", "token_uri": "https://oauth2.googleapis.com/token"}'
+   ```
+
+   Keep `G_SHEET_CREDENTIALS` on one line in **single** quotes — single-quoted
+   YAML passes the JSON's `\n` escapes through untouched, which the private key
+   needs. (A file is required rather than `--set-env-vars` because that flag
+   splits on commas, and the service-account JSON is full of them — gcloud fails
+   with `Bad syntax for dict arg` before it ever reaches the API.)
+
+   > ⚠️ **Never commit `env.yaml`** — it holds your bot token and your service
+   > account's private key. It is already listed in `.gitignore`.
+
+3. **Deploy the function** (from the repo root):
+
+   ```bash
+   gcloud functions deploy shakahari-recorder \
+     --gen2 \
+     --runtime=python312 \
+     --region=us-west1 \
+     --source=. \
+     --entry-point=telegram_webhook \
+     --trigger-http \
+     --allow-unauthenticated \
+     --env-vars-file=env.yaml
+   ```
+
+   Note the `httpsTrigger.url` printed at the end — you'll need it next.
+
+4. **Register the webhook with Telegram:**
+
+   ```bash
+   curl -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook" \
+     -d "url=${CLOUD_FUNCTION_URL}" \
+     -d "secret_token=${TELEGRAM_WEBHOOK_SECRET}"
+   ```
+
+5. **Verify it's registered:**
+
+   ```bash
+   curl "https://api.telegram.org/bot${TELEGRAM_TOKEN}/getWebhookInfo"
+   ```
+
+   Expect the response's `"url"` to match your function's URL and
+   `"last_error_message"` to be absent.
+
+> A webhook and `getUpdates` polling are mutually exclusive — once this is
+> registered, nothing in this repo calls `getUpdates` anymore (the Advisor's
+> `sync_from_mailbox()` was removed for exactly this reason).
+
+> The secret token only proves an update came from Telegram, not who sent it, so
+> the Recorder additionally ignores anything that isn't from `TELEGRAM_CHAT_ID`.
+> If buttons and `/log` do nothing, check that value first.
+
 ## 📱 Usage Guide
 
 ### The Daily Notification
 
-Every morning, if action is required, Shakahari sends you a digest grouped by action type:
+Every morning, if action is required, Shakahari sends you a compact digest —
+one line per task showing a deterministic days-since-vs-threshold code
+instead of a full sentence, so a large backlog stays scannable:
 
 > 🌿 **Plant Care Tasks (2026-01-22)**  
 >_All plants generally healthy._
 >
-> 💧 **WATER**: Monstera, Peace Lily, Fern  
-> 🔄 **ROTATE**: Pothos  
-> 🧪 **FERTILIZE**: Fiddle Leaf 
->
-> **Details:**  
-> 🔴💧 **Monstera**: Soil dry after 8 days, indoor heat accelerates drying  
->    👉 Tap to log: `/water_monstera`
-> 🟡💧 **Peace Lily**: Low humidity environment needs more frequent watering  
->    👉 Tap to log: `/water_peace_lily`
-> 🟢🔄 **Pothos**: Leaves leaning toward window, rotate for even growth  
->    👉 Tap to log: `/rotate_pothos`
->
-> _Reply 'Done' to confirm all at once._  
+> 🔴💧 **Monstera** — 12d≥10d  
+> 🟡💧 **Peace Lily** — 18d≥14d  
+> 🟢🔄 **Pothos** — 9d≥7d  
+
+Each line has its own named button underneath (e.g. "💧 Water Monstera"),
+plus a "Mark watering complete" / "Mark rotating complete" style button per
+action type actually present, and a final "Mark everything above done".
 
 ### Interacting with the Bot
 
-You have two zero-friction ways to log your plant care actions:
+Every task in the daily digest has its own named button:
 
-**1. 1-Tap Logging (Recommended)**
-Telegram automatically turns commands like `/water_monstera` into clickable buttons. Simply tap the link below any task to instantly log that action to the database.
+- **Tap a task's button** (e.g. "💧 Water Monstera") to log it instantly —
+  the button changes to a checkmark and a toast confirms it, all within the
+  same message. Nothing new is added to the chat, so you never lose your
+  scroll position.
+- **Tap "Mark watering complete"** (or fertilizing / rotating / etc. — one
+  button per action type actually in today's digest) to confirm every plant
+  currently needing that action in one tap.
+- **Tap "✅ Mark everything above done"** to confirm every pending task at once.
+- Not doing something today? Just don't tap its button — there's no
+  separate "skip" action; the agent reconsiders anything still pending
+  again tomorrow.
 
-**2. Natural Language Replies**
-If you prefer typing, you can reply directly to the bot:
-- `Done` (Marks all pending tasks complete)
-- `Watered [Plant]` (Updates Last Watered date)
-- `Fertilized [Plant]` (Updates Last Fertilized date)
+**Logging anything else:** send `/log` at any time to log an action that
+wasn't on the digest — pick a plant, then pick what you did. This works
+independently of whatever the agent last recommended.
 
-**Composite Replies & Action Carry-over:** 
-You can log actions for multiple plants in one sentence. The bot will intelligently carry over the action verb to subsequent plants:
-- `Watered Fern, checked Monstera` -> Logs WATER for Fern, CHECK for Monstera.
-- `Watered Monstera, Fiddle Leaf Fig, and Peace Lily` -> Logs WATER for all three plants.
-
-> **Note:** Shakahari processes your text replies the **next time** it runs (the following morning). Tapping a `/command` sends it immediately, but it is also processed on the next Cron run.
+> Both paths are handled instantly by a Cloud Function webhook (see
+> "Real-time logging setup" below) — not the daily cron job.
 
 ## 📂 Project Structure
 
@@ -147,10 +219,11 @@ You can log actions for multiple plants in one sentence. The bot will intelligen
 ├── src/
 │   ├── agent.py         # Gemini AI Logic (Prompt Engineering)
 │   ├── config.py        # Configuration & Env Vars
-│   ├── storage.py       # Google Sheets & Mailbox Logic
+│   ├── storage.py       # Google Sheets DB & Care Logging
 │   ├── telegram_bot.py  # Notification Service
+│   ├── recorder.py      # Cloud Function for Real-Time Logging
 │   └── weather.py       # Open-Meteo Integration
-├── main.py              # Entry point
+├── main.py              # Entry point (Advisor cron job)
 └── requirements.txt     # Python dependencies
 ```
 

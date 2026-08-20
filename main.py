@@ -3,19 +3,10 @@ from src.config import MODEL_ID
 from src.storage import PlantDB
 from src.weather import get_forecast
 from src.agent import PlantAgent
-from src.telegram_bot import send_alert
-
-# Action icons for Telegram messages
-ACTION_ICONS = {
-    'WATER': '💧',
-    'FERTILIZE': '🧪',
-    'MIST': '💨',
-    'ROTATE': '🔄',
-    'MOVE': '📍',
-    'PRUNE': '✂️',
-    'REPOT': '🪴',
-    'CHECK': '🔍',
-}
+from src.telegram_bot import send_message
+from src.actions import ACTION_ICONS, ACTION_GERUNDS, CARE_ACTIONS
+from src.callbacks import encode_task_button, encode_alldone, encode_action_done
+from src.recorder import telegram_webhook  # noqa: F401 -- Cloud Function entry point, unused by the Advisor
 
 # Priority indicators
 PRIORITY_MARKERS = {
@@ -26,60 +17,70 @@ PRIORITY_MARKERS = {
 
 
 def format_tasks(tasks, summary):
-    """Format tasks into a readable Telegram message grouped by action type."""
+    """Format tasks into a compact digest: one line per task showing a
+    deterministic days-since-vs-threshold code instead of Gemini's prose."""
     today = datetime.now().strftime("%Y-%m-%d")
     lines = [f"🌿 <b>Plant Care Tasks ({today})</b>"]
-    
+
     if summary:
         lines.append(f"<i>{summary}</i>")
-    
-    # Group tasks by action type
-    by_action = {}
-    for t in tasks:
-        action = t.get('action', 'CHECK').upper()
-        if action not in by_action:
-            by_action[action] = []
-        by_action[action].append(t)
-    
-    # Quick summary section - grouped by action
+
     lines.append("")
-    for action in ['WATER', 'FERTILIZE', 'MIST', 'ROTATE', 'MOVE', 'PRUNE', 'REPOT', 'CHECK']:
-        if action in by_action:
-            icon = ACTION_ICONS.get(action, '📋')
-            plant_names = [t.get('name', '?') for t in by_action[action]]
-            lines.append(f"{icon} <b>{action}</b>: {', '.join(plant_names)}")
-    
-    # Detailed section with reasons and clickable commands
-    lines.append("\n—")
-    lines.append("<b>Details:</b>")
+    for t in tasks:
+        lines.append(_format_task_line(t))
+
+    return "\n".join(lines)
+
+
+def _format_task_line(t):
+    action = t.get('action', 'CHECK').upper()
+    icon = ACTION_ICONS.get(action, '📋')
+    name = t.get('name', 'Unknown')
+    priority = t.get('priority', '').upper()
+    marker = PRIORITY_MARKERS.get(priority, '')
+
+    days = t.get('days_since')
+    threshold = t.get('threshold')
+    since = "never" if days is None else f"{days}d overdue"
+    code = f"{since} · 🔁{threshold}d" if threshold else since
+
+    return f"{marker}{icon} <b>{name}</b> — {code}"
+
+
+def build_digest_keyboard(tasks):
+    """One named button per task, one bulk "Mark X complete" button per action
+    type present, plus a final mark-everything row."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    rows = []
+    present_actions = []
     for t in tasks:
         action = t.get('action', 'CHECK').upper()
-        icon = ACTION_ICONS.get(action, '📋')
         name = t.get('name', 'Unknown')
-        reason = t.get('reason', '')
-        priority = t.get('priority', '').upper()
-        priority_marker = PRIORITY_MARKERS.get(priority, '')
-        
-        # Create clickable command (e.g. /water_monstera)
-        safe_name = "".join(c if c.isalnum() else "_" for c in name.lower())
-        safe_name = "_".join(filter(None, safe_name.split("_"))) # Remove duplicate underscores
-        command = f"/{action.lower()}_{safe_name}"
-        
-        lines.append(f"{priority_marker}{icon} <b>{name}</b>: {reason}")
-        lines.append(f"   👉 Tap to log: {command}")
-    
-    lines.append("\n<i>Reply 'Done' to confirm all at once.</i>")
-    
-    return "\n".join(lines)
+        icon = ACTION_ICONS.get(action, '📋')
+        rows.append([
+            {"text": f"{icon} {action.title()} {name}", "callback_data": encode_task_button(action, name)},
+        ])
+        if action not in present_actions:
+            present_actions.append(action)
+
+    for action in CARE_ACTIONS:
+        if action in present_actions:
+            icon = ACTION_ICONS.get(action, '📋')
+            gerund = ACTION_GERUNDS.get(action, action.lower())
+            rows.append([
+                {"text": f"{icon} Mark {gerund} complete", "callback_data": encode_action_done(action, today)},
+            ])
+
+    rows.append([{"text": "✅ Mark everything above done", "callback_data": encode_alldone(today)}])
+    return {"inline_keyboard": rows}
 
 
 def main():
     print(f"🌿 Starting Plant Care Advisor ({MODEL_ID})...")
 
-    # 1. Sync Mailbox (process user replies)
+    # 1. Connect to the Sheet
     try:
         db = PlantDB()
-        db.sync_from_mailbox()
     except Exception as e:
         print(f"❌ DB Init Failed: {e}")
         return
@@ -96,12 +97,17 @@ def main():
     agent = PlantAgent()
     tasks, summary = agent.get_tasks(weather, db.get_inventory(), care_history)
 
-    # 4. Notify & Update Status
+    # 5. Notify & Update Status
     if tasks:
         message = format_tasks(tasks, summary)
-        send_alert(message)
-        db.mark_pending(tasks)
-        print(f"✅ Sent {len(tasks)} care recommendations.")
+        keyboard = build_digest_keyboard(tasks)
+        if send_message(message, reply_markup=keyboard):
+            db.mark_pending(tasks)
+            print(f"✅ Sent {len(tasks)} care recommendations.")
+        else:
+            # Marking these pending now would hide them from tomorrow's run even
+            # though no digest ever reached the phone.
+            print(f"❌ Digest failed to send — leaving {len(tasks)} task(s) unmarked for tomorrow's run.")
     else:
         print("✅ No tasks today. All plants healthy!")
 

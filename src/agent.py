@@ -4,18 +4,7 @@ from google import genai
 from google.genai import types
 from src.config import GEMINI_API_KEY, MODEL_ID
 from src.plant_api import get_care_guidelines
-
-# Predefined action types for consistency
-CARE_ACTIONS = [
-    "WATER",      # Water the plant
-    "FERTILIZE",  # Apply fertilizer
-    "MIST",       # Mist leaves for humidity
-    "ROTATE",     # Rotate for even growth
-    "MOVE",       # Relocate (light/temp issues)
-    "PRUNE",      # Remove dead/leggy growth
-    "REPOT",      # Needs larger container
-    "CHECK",      # General inspection needed
-]
+from src.actions import CARE_ACTIONS
 
 # Minimum days before recommending each action again (safety nets)
 MIN_ACTION_INTERVALS = {
@@ -194,17 +183,26 @@ If no actions needed, return {{"tasks": [], "summary": "All plants look healthy!
             for task in tasks:
                 action = task.get('action', '').upper()
                 plant_name = task.get('name')
-                
+
                 # Check minimum interval for this action
                 min_interval = MIN_ACTION_INTERVALS.get(action, 0)
                 plant_data = next((p for p in inventory if p['name'] == plant_name), None)
-                
+                days = plant_data.get('days_since_action', {}).get(action) if plant_data else None
+
                 if plant_data and min_interval > 0:
-                    days = plant_data.get('days_since_action', {}).get(action)
                     if days is not None and days < min_interval:
                         print(f"   ⏭️ Filtered {action} for {plant_name} (only {days} days, min={min_interval})")
                         continue
-                
+
+                # Deterministic days-since/threshold, computed here rather than left to
+                # Gemini's prose "reason" -- lets the digest render a compact code
+                # ("12d>=10d") without depending on how verbose the model feels like being.
+                threshold = min_interval
+                if action == 'WATER' and plant_data:
+                    threshold = plant_data['watering_guidelines']['max_days']
+
+                task['days_since'] = days
+                task['threshold'] = threshold
                 filtered_tasks.append(task)
             
             return filtered_tasks, result.get('summary', '')

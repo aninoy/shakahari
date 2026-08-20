@@ -5,3 +5,5 @@ google-genai
 requests
 pytz
 python-dotenv
+pytest
+functions-framework

@@ -1,5 +1,7 @@
 .venv
 .env
+env.yaml
 credentials*
 __pycache__
 playground*.json
+.worktrees
