@@ -14,6 +14,12 @@ from src.telegram_bot import answer_callback_query, edit_message_reply_markup, e
 
 def telegram_webhook(request):
     """HTTP Cloud Function entry point for the Telegram webhook."""
+    if not TELEGRAM_WEBHOOK_SECRET:
+        # Fail closed: with no configured secret there is nothing to authenticate
+        # against, so refuse everything rather than accept everything.
+        print("⚠️ Recorder: TELEGRAM_WEBHOOK_SECRET is not set — refusing all requests.")
+        return ("Forbidden", 403)
+
     if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != TELEGRAM_WEBHOOK_SECRET:
         return ("Forbidden", 403)
 

@@ -64,6 +64,19 @@ def test_webhook_rejects_wrong_secret(monkeypatch):
     assert status == 403
 
 
+@pytest.mark.parametrize("unset_value", [None, ""])
+def test_webhook_refuses_every_request_when_secret_is_unset(monkeypatch, unset_value):
+    """A missing TELEGRAM_WEBHOOK_SECRET must fail closed. Without this, a request
+    carrying no secret header compares None != None -> False and gets processed,
+    turning the function into a public, unauthenticated Sheet-writing endpoint."""
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", unset_value)
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+
+    assert recorder.telegram_webhook(FakeRequest({"callback_query": {}}, secret=None))[1] == 403
+    assert recorder.telegram_webhook(FakeRequest({"callback_query": {}}, secret=""))[1] == 403
+    assert recorder.telegram_webhook(FakeRequest({"callback_query": {}}, secret="anything"))[1] == 403
+
+
 def test_task_button_logs_action_and_confirms(monkeypatch):
     monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
     monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
