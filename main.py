@@ -6,6 +6,7 @@ from src.agent import PlantAgent
 from src.telegram_bot import send_message
 from src.actions import ACTION_ICONS
 from src.callbacks import encode_task_button, encode_skip_button, encode_alldone
+from src.recorder import telegram_webhook  # noqa: F401 -- Cloud Function entry point, unused by the Advisor
 
 # Priority indicators
 PRIORITY_MARKERS = {
