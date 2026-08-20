@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from src.actions import CARE_ACTIONS, ACTION_ICONS
 from src.callbacks import (
     decode_callback,
@@ -112,6 +114,17 @@ def _handle_skip(callback_id, chat_id, message_id, message, parsed):
 
 
 def _handle_alldone(callback_id, chat_id, message_id, parsed):
+    # mark_all_done() acts on whatever is pending *now*, which may have become
+    # pending after this digest was sent. Applying a stale digest's date to it
+    # would write wrong dates into CareHistory, so only today's digest is honoured.
+    if parsed["date"] != datetime.now().strftime('%Y-%m-%d'):
+        answer_callback_query(
+            callback_id,
+            text="This digest is from a previous day — reply isn't supported anymore, check today's message instead.",
+            show_alert=True,
+        )
+        return
+
     db = PlantDB()
     count = db.mark_all_done(date=parsed["date"])
 

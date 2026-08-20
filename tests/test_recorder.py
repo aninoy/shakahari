@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pandas as pd
 import pytest
 
@@ -242,12 +244,37 @@ def test_alldone_clears_entire_keyboard(monkeypatch):
     )
     monkeypatch.setattr(recorder, "answer_callback_query", lambda *a, **k: None)
 
-    request = FakeRequest(_callback_update("alldone:2026-08-19"), secret="test-secret")
+    today = datetime.now().strftime("%Y-%m-%d")
+    request = FakeRequest(_callback_update(f"alldone:{today}"), secret="test-secret")
 
     recorder.telegram_webhook(request)
 
-    assert FakePlantDB.instances[-1].alldone_calls == ["2026-08-19"]
+    assert FakePlantDB.instances[-1].alldone_calls == [today]
     assert edits[-1] == {"inline_keyboard": []}
+
+
+def test_alldone_from_a_previous_days_digest_is_refused(monkeypatch):
+    """mark_all_done() is scoped to whatever the Sheet shows as pending *now*, so
+    honouring a stale digest's baked-in date would stamp today's pending work with
+    an old date. Refuse instead of corrupting care-history dates."""
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+    edits = []
+    answers = []
+    monkeypatch.setattr(recorder, "edit_message_reply_markup", lambda *a, **k: edits.append((a, k)))
+    monkeypatch.setattr(
+        recorder, "answer_callback_query",
+        lambda callback_id, text="", show_alert=False: answers.append((text, show_alert)),
+    )
+
+    request = FakeRequest(_callback_update("alldone:2020-01-01"), secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    assert FakePlantDB.instances == []  # never even opened the Sheet
+    assert edits == []
+    assert "previous day" in answers[-1][0]
+    assert answers[-1][1] is True
 
 
 def test_unknown_callback_data_is_a_noop(monkeypatch):
