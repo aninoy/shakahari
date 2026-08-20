@@ -11,7 +11,7 @@ Unlike simple timer apps, Shakahari uses **Gemini 2.5 Flash** (AI), **Open-Meteo
 - **📅 Days Tracking:** Calculates days since each action type (WATER, MIST, ROTATE, etc.) from CareHistory.
 - **🛡️ Safety Filters:** Won't recommend watering if < 3 days since last watering, rotating if < 7 days, etc.
 - **🌦️ Weather Integrated:** Automatically skips watering outdoor plants if it rained.
-- **💬 Two-Way Feedback:** Receive tasks via **Telegram**. Reply with "Done" or "Watered Fern, Rotated Pothos" for composite updates.
+- **💬 Instant Feedback:** Receive daily digest via **Telegram**. Tap buttons to log actions instantly, or send `/log` anytime to log actions not on the digest.
 - **📂 Serverless:** Runs on a scheduled GitHub Action (Cron). No AWS/GCP bills.
 
 
@@ -20,14 +20,16 @@ Unlike simple timer apps, Shakahari uses **Gemini 2.5 Flash** (AI), **Open-Meteo
 ```mermaid
 flowchart TD
     A[Daily Trigger] -->|1. Wake Up| B[Main Script]
-    B -->|2. Check Mailbox| C[Telegram API]
-    C -->|User Replies| D[Update Google Sheet]
-    B -->|3. Get Context| E[Fetch Weather]
-    B -->|4. Get Inventory| F[Google Sheets DB]
-    B -->|5. Ask Agent| G[Gemini AI]
-    G -->|6. Decisions| H{Tasks Needed}
-    H -->|Yes| I[Send Telegram Alert]
-    H -->|No| J[Sleep]
+    B -->|2. Get Context| C[Fetch Weather]
+    B -->|3. Get Inventory| D[Google Sheets DB]
+    B -->|4. Ask Agent| E[Gemini AI]
+    E -->|5. Decisions| F{Tasks Needed}
+    F -->|Yes| G[Send Telegram Digest]
+    F -->|No| H[Sleep]
+    
+    I[User Taps Button/Sends /log] -->|Instant| J[Cloud Function Webhook]
+    J -->|Update| K[Google Sheets DB]
+    G -.->|Includes Buttons| I
 ```
 
 ## 🛠️ Prerequisites
@@ -159,13 +161,10 @@ Every morning, if action is required, Shakahari sends you a digest grouped by ac
 >
 > **Details:**  
 > 🔴💧 **Monstera**: Soil dry after 8 days, indoor heat accelerates drying  
->    👉 Tap to log: `/water_monstera`
 > 🟡💧 **Peace Lily**: Low humidity environment needs more frequent watering  
->    👉 Tap to log: `/water_peace_lily`
-> 🟢🔄 **Pothos**: Leaves leaning toward window, rotate for even growth  
->    👉 Tap to log: `/rotate_pothos`
+> 🟢🔄 **Pothos**: Leaves leaning toward window, rotate for even growth
 >
-> _Reply 'Done' to confirm all at once._  
+> _(Buttons under the message allow you to log these actions instantly)_  
 
 ### Interacting with the Bot
 
@@ -194,10 +193,11 @@ independently of whatever the agent last recommended.
 ├── src/
 │   ├── agent.py         # Gemini AI Logic (Prompt Engineering)
 │   ├── config.py        # Configuration & Env Vars
-│   ├── storage.py       # Google Sheets & Mailbox Logic
+│   ├── storage.py       # Google Sheets DB & Care Logging
 │   ├── telegram_bot.py  # Notification Service
+│   ├── recorder.py      # Cloud Function for Real-Time Logging
 │   └── weather.py       # Open-Meteo Integration
-├── main.py              # Entry point
+├── main.py              # Entry point (Advisor cron job)
 └── requirements.txt     # Python dependencies
 ```
 
