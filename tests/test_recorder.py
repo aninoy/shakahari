@@ -277,13 +277,15 @@ def test_alldone_from_a_previous_days_digest_is_refused(monkeypatch):
     assert answers[-1][1] is True
 
 
-def test_unknown_callback_data_is_a_noop(monkeypatch):
+def test_unknown_callback_data_gives_visible_feedback(monkeypatch):
+    """An empty-text answer just stops the tap spinner with no explanation, so
+    undecodable callback_data must surface an actual message instead."""
     monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
     monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
     answers = []
     monkeypatch.setattr(
         recorder, "answer_callback_query",
-        lambda callback_id, text="", show_alert=False: answers.append(callback_id),
+        lambda callback_id, text="", show_alert=False: answers.append((callback_id, text, show_alert)),
     )
 
     request = FakeRequest(_callback_update("garbage"), secret="test-secret")
@@ -291,7 +293,11 @@ def test_unknown_callback_data_is_a_noop(monkeypatch):
     recorder.telegram_webhook(request)
 
     assert FakePlantDB.instances == []
-    assert answers == ["cbq-1"]
+    assert len(answers) == 1
+    callback_id, text, show_alert = answers[0]
+    assert callback_id == "cbq-1"
+    assert text != ""
+    assert show_alert is True
 
 
 def test_malformed_callback_query_returns_200_without_crashing(monkeypatch):

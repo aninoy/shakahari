@@ -82,7 +82,7 @@ def _handle_callback(callback_query):
     elif kind == "logback":
         _handle_logback(callback_id, chat_id, message_id)
     else:
-        answer_callback_query(callback_id)
+        answer_callback_query(callback_id, text="Sorry — I couldn't read that button.", show_alert=True)
 
 
 def _handle_task(callback_id, chat_id, message_id, message, parsed):
