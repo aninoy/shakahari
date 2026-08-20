@@ -107,9 +107,13 @@ def main():
     if tasks:
         message = format_tasks(tasks, summary)
         keyboard = build_digest_keyboard(tasks)
-        send_message(message, reply_markup=keyboard)
-        db.mark_pending(tasks)
-        print(f"✅ Sent {len(tasks)} care recommendations.")
+        if send_message(message, reply_markup=keyboard):
+            db.mark_pending(tasks)
+            print(f"✅ Sent {len(tasks)} care recommendations.")
+        else:
+            # Marking these pending now would hide them from tomorrow's run even
+            # though no digest ever reached the phone.
+            print(f"❌ Digest failed to send — leaving {len(tasks)} task(s) unmarked for tomorrow's run.")
     else:
         print("✅ No tasks today. All plants healthy!")
 

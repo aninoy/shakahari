@@ -7,7 +7,10 @@ BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 def send_message(message, reply_markup=None):
     """Sends a message to your phone. Chunks messages over 4000 chars.
-    reply_markup (an inline keyboard dict) is attached only to the final chunk."""
+    reply_markup (an inline keyboard dict) is attached only to the final chunk.
+
+    Returns True if every chunk was accepted by Telegram, False if any failed --
+    callers must not treat a failed send as a delivered message."""
     url = f"{BASE_URL}/sendMessage"
 
     MAX_LENGTH = 4000
@@ -24,6 +27,7 @@ def send_message(message, reply_markup=None):
     if current_chunk:
         chunks.append(current_chunk)
 
+    all_sent = True
     for i, chunk in enumerate(chunks):
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML"}
         if reply_markup and i == len(chunks) - 1:
@@ -32,9 +36,12 @@ def send_message(message, reply_markup=None):
             response = requests.post(url, json=payload)
             response.raise_for_status()
         except Exception as e:
+            all_sent = False
             print(f"⚠️ Telegram Send Error: {e}")
             if 'response' in locals() and hasattr(response, 'text'):
                 print(f"   Telegram API Response: {response.text}")
+
+    return all_sent
 
 
 def answer_callback_query(callback_query_id, text="", show_alert=False):
