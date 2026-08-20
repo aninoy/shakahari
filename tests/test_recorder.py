@@ -1,3 +1,4 @@
+import pandas as pd
 import pytest
 
 from src import recorder
@@ -208,3 +209,85 @@ def test_malformed_callback_query_returns_200_without_crashing(monkeypatch):
     body, status = recorder.telegram_webhook(request)
 
     assert status == 200
+
+
+def test_log_command_sends_plant_picker(monkeypatch):
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+
+    class FakeInventoryDB(FakePlantDB):
+        def get_inventory(self):
+            return pd.DataFrame([{"Name": "Monstera"}, {"Name": "Pothos"}])
+
+    monkeypatch.setattr(recorder, "PlantDB", FakeInventoryDB)
+    sent = []
+    monkeypatch.setattr(recorder, "send_message", lambda text, reply_markup=None: sent.append((text, reply_markup)))
+
+    request = FakeRequest({"message": {"chat": {"id": 1}, "text": "/log"}}, secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    assert sent[0][0] == "Which plant?"
+    assert sent[0][1]["inline_keyboard"] == [
+        [{"text": "Monstera", "callback_data": "logsel:Monstera"}],
+        [{"text": "Pothos", "callback_data": "logsel:Pothos"}],
+    ]
+
+
+def test_logsel_shows_action_picker(monkeypatch):
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    edits = []
+    monkeypatch.setattr(
+        recorder, "edit_message_text",
+        lambda chat_id, message_id, text, reply_markup=None: edits.append((text, reply_markup)),
+    )
+    monkeypatch.setattr(recorder, "answer_callback_query", lambda *a, **k: None)
+
+    request = FakeRequest(_callback_update("logsel:Monstera"), secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    assert edits[0][0] == "What did you do for Monstera?"
+    labels = [btn["text"] for row in edits[0][1]["inline_keyboard"] for btn in row]
+    assert "💧 Water" in labels
+    assert "‹ Back" in labels
+
+
+def test_logact_logs_and_confirms(monkeypatch):
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+    edits = []
+    monkeypatch.setattr(
+        recorder, "edit_message_text",
+        lambda chat_id, message_id, text, reply_markup=None: edits.append(text),
+    )
+    monkeypatch.setattr(recorder, "answer_callback_query", lambda *a, **k: None)
+
+    request = FakeRequest(_callback_update("logact:Monstera:MIST"), secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    assert FakePlantDB.instances[-1].log_calls == [("Monstera", "MIST")]
+    assert edits[0] == "✅ Logged Mist for Monstera"
+
+
+def test_logback_shows_plant_picker_again(monkeypatch):
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+
+    class FakeInventoryDB(FakePlantDB):
+        def get_inventory(self):
+            return pd.DataFrame([{"Name": "Fern"}])
+
+    monkeypatch.setattr(recorder, "PlantDB", FakeInventoryDB)
+    edits = []
+    monkeypatch.setattr(
+        recorder, "edit_message_text",
+        lambda chat_id, message_id, text, reply_markup=None: edits.append((text, reply_markup)),
+    )
+    monkeypatch.setattr(recorder, "answer_callback_query", lambda *a, **k: None)
+
+    request = FakeRequest(_callback_update("logback"), secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    assert edits[0][0] == "Which plant?"
+    assert edits[0][1]["inline_keyboard"] == [[{"text": "Fern", "callback_data": "logsel:Fern"}]]

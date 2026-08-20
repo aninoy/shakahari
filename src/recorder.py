@@ -1,4 +1,12 @@
-from src.callbacks import decode_callback, encode_task_button, encode_skip_button
+from src.actions import CARE_ACTIONS, ACTION_ICONS
+from src.callbacks import (
+    decode_callback,
+    encode_task_button,
+    encode_skip_button,
+    encode_log_select,
+    encode_log_action,
+    encode_log_back,
+)
 from src.config import TELEGRAM_WEBHOOK_SECRET
 from src.storage import PlantDB
 from src.telegram_bot import answer_callback_query, edit_message_reply_markup, edit_message_text, send_message
@@ -14,6 +22,8 @@ def telegram_webhook(request):
     try:
         if "callback_query" in update:
             _handle_callback(update["callback_query"])
+        elif "message" in update and update["message"].get("text", "").strip() == "/log":
+            _handle_log_command(update["message"])
     except Exception as e:
         print(f"⚠️ Recorder: failed to process update: {e}")
 
@@ -35,6 +45,12 @@ def _handle_callback(callback_query):
         _handle_skip(callback_id, chat_id, message_id, message, parsed)
     elif kind == "alldone":
         _handle_alldone(callback_id, chat_id, message_id, parsed)
+    elif kind == "logsel":
+        _handle_logsel(callback_id, chat_id, message_id, parsed)
+    elif kind == "logact":
+        _handle_logact(callback_id, chat_id, message_id, parsed)
+    elif kind == "logback":
+        _handle_logback(callback_id, chat_id, message_id)
     else:
         answer_callback_query(callback_id)
 
@@ -87,3 +103,57 @@ def _replace_task_row(current_markup, action, plant_name, new_row):
         else:
             updated_rows.append(row)
     return {"inline_keyboard": updated_rows}
+
+
+def _handle_log_command(message):
+    db = PlantDB()
+    plant_names = db.get_inventory()["Name"].tolist()
+    send_message("Which plant?", reply_markup=_build_plant_picker(plant_names))
+
+
+def _handle_logsel(callback_id, chat_id, message_id, parsed):
+    edit_message_text(
+        chat_id, message_id,
+        f"What did you do for {parsed['plant']}?",
+        reply_markup=_build_action_picker(parsed["plant"]),
+    )
+    answer_callback_query(callback_id)
+
+
+def _handle_logact(callback_id, chat_id, message_id, parsed):
+    db = PlantDB()
+    found = db.log_task_action(parsed["plant"], parsed["action"])
+
+    if not found:
+        answer_callback_query(callback_id, text=f"Couldn't find '{parsed['plant']}'", show_alert=True)
+        return
+
+    edit_message_text(chat_id, message_id, f"✅ Logged {parsed['action'].title()} for {parsed['plant']}")
+    answer_callback_query(callback_id, text=f"🌿 Logged: {parsed['action'].title()} {parsed['plant']}")
+
+
+def _handle_logback(callback_id, chat_id, message_id):
+    db = PlantDB()
+    plant_names = db.get_inventory()["Name"].tolist()
+    edit_message_text(chat_id, message_id, "Which plant?", reply_markup=_build_plant_picker(plant_names))
+    answer_callback_query(callback_id)
+
+
+def _build_plant_picker(plant_names):
+    rows = [[{"text": name, "callback_data": encode_log_select(name)}] for name in plant_names]
+    return {"inline_keyboard": rows}
+
+
+def _build_action_picker(plant_name):
+    rows = []
+    row = []
+    for action in CARE_ACTIONS:
+        icon = ACTION_ICONS.get(action, "📋")
+        row.append({"text": f"{icon} {action.title()}", "callback_data": encode_log_action(plant_name, action)})
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([{"text": "‹ Back", "callback_data": encode_log_back()}])
+    return {"inline_keyboard": rows}
