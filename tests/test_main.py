@@ -19,7 +19,8 @@ def test_format_tasks_is_compact_with_a_days_since_code_not_prose():
     assert "/water_monstera" not in text
     assert "Soil dry" not in text
     assert "Monstera" in text
-    assert "12d≥10d" in text
+    assert "12d overdue" in text
+    assert "🔁10d" in text
 
 
 def test_format_tasks_shows_never_when_no_history_exists():

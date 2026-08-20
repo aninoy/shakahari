@@ -41,12 +41,8 @@ def _format_task_line(t):
 
     days = t.get('days_since')
     threshold = t.get('threshold')
-    if days is None:
-        code = "never"
-    elif threshold:
-        code = f"{days}d≥{threshold}d"
-    else:
-        code = f"{days}d"
+    since = "never" if days is None else f"{days}d overdue"
+    code = f"{since} · 🔁{threshold}d" if threshold else since
 
     return f"{marker}{icon} <b>{name}</b> — {code}"
 
