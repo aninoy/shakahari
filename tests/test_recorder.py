@@ -173,9 +173,12 @@ def test_task_button_logs_action_and_confirms(monkeypatch):
 
     body, status = recorder.telegram_webhook(request)
 
+    today = datetime.now().strftime("%Y-%m-%d")
     assert status == 200
     assert FakePlantDB.instances[-1].log_calls == [("Monstera", "WATER")]
-    assert edits[-1][2]["inline_keyboard"][0] == [{"text": "✓ Logged just now", "callback_data": "noop"}]
+    assert edits[-1][2]["inline_keyboard"][0] == [
+        {"text": f"✓ Water Monstera — {today}", "callback_data": "noop"},
+    ]
     assert edits[-1][2]["inline_keyboard"][1] == markup["inline_keyboard"][1]
     assert answers[-1][0] == "cbq-1"
 
@@ -224,9 +227,9 @@ def test_donetype_marks_matching_rows_and_bulk_button_done(monkeypatch):
 
     assert FakePlantDB.instances[-1].donetype_calls == [("WATER", today)]
     rows = edits[-1]["inline_keyboard"]
-    assert rows[0] == [{"text": "✓ Logged just now", "callback_data": "noop"}]
+    assert rows[0] == [{"text": f"✓ Water Monstera — {today}", "callback_data": "noop"}]
     assert rows[1] == markup["inline_keyboard"][1]
-    assert rows[2] == [{"text": "✓ Logged just now", "callback_data": "noop"}]
+    assert rows[2] == [{"text": f"✓ Water marked complete (2) — {today}", "callback_data": "noop"}]
     assert rows[3] == markup["inline_keyboard"][3]
 
 

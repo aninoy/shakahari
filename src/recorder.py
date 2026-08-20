@@ -94,7 +94,8 @@ def _handle_task(callback_id, chat_id, message_id, message, parsed):
         answer_callback_query(callback_id, text=f"Couldn't find '{parsed['plant']}'", show_alert=True)
         return
 
-    done_row = [{"text": "✓ Logged just now", "callback_data": "noop"}]
+    today = datetime.now().strftime('%Y-%m-%d')
+    done_row = [{"text": f"✓ {parsed['action'].title()} {parsed['plant']} — {today}", "callback_data": "noop"}]
     new_markup = _replace_task_row(message["reply_markup"], parsed["action"], parsed["plant"], done_row)
     edit_message_reply_markup(chat_id, message_id, new_markup)
     answer_callback_query(callback_id, text=f"🌿 Logged: {parsed['action'].title()} {parsed['plant']}")
@@ -133,7 +134,7 @@ def _handle_donetype(callback_id, chat_id, message_id, message, parsed):
     db = PlantDB()
     count = db.mark_action_done(parsed["action"], date=parsed["date"])
 
-    new_markup = _replace_action_rows(message["reply_markup"], parsed["action"])
+    new_markup = _replace_action_rows(message["reply_markup"], parsed["action"], parsed["date"], count)
     edit_message_reply_markup(chat_id, message_id, new_markup)
     answer_callback_query(callback_id, text=f"✅ Marked {count} plant(s) done")
 
@@ -151,17 +152,21 @@ def _replace_task_row(current_markup, action, plant_name, new_row):
     return {"inline_keyboard": updated_rows}
 
 
-def _replace_action_rows(current_markup, action):
-    """Collapses every row for this action -- individual task buttons and the
-    bulk "Mark X complete" button itself -- into inert done markers."""
-    done_row = [{"text": "✓ Logged just now", "callback_data": "noop"}]
+def _replace_action_rows(current_markup, action, date, count):
+    """Collapses every row for this action into a dated done marker -- each
+    individual task row names its own plant, the bulk button shows the count."""
     task_prefix = f"t:{action}:"
     donetype_prefix = f"donetype:{action}:"
+    label = action.title()
     updated_rows = []
     for row in current_markup.get("inline_keyboard", []):
         row_data = [btn.get("callback_data") or "" for btn in row]
-        if any(cd.startswith(task_prefix) or cd.startswith(donetype_prefix) for cd in row_data):
-            updated_rows.append(done_row)
+        task_match = next((cd for cd in row_data if cd.startswith(task_prefix)), None)
+        if task_match:
+            plant_name = task_match[len(task_prefix):]
+            updated_rows.append([{"text": f"✓ {label} {plant_name} — {date}", "callback_data": "noop"}])
+        elif any(cd.startswith(donetype_prefix) for cd in row_data):
+            updated_rows.append([{"text": f"✓ {label} marked complete ({count}) — {date}", "callback_data": "noop"}])
         else:
             updated_rows.append(row)
     return {"inline_keyboard": updated_rows}
