@@ -3,7 +3,7 @@ from src.config import MODEL_ID
 from src.storage import PlantDB
 from src.weather import get_forecast
 from src.agent import PlantAgent
-from src.telegram_bot import send_alert
+from src.telegram_bot import send_message
 from src.actions import ACTION_ICONS
 
 # Priority indicators
@@ -88,7 +88,7 @@ def main():
     # 4. Notify & Update Status
     if tasks:
         message = format_tasks(tasks, summary)
-        send_alert(message)
+        send_message(message)
         db.mark_pending(tasks)
         print(f"✅ Sent {len(tasks)} care recommendations.")
     else:
