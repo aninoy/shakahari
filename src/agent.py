@@ -4,18 +4,7 @@ from google import genai
 from google.genai import types
 from src.config import GEMINI_API_KEY, MODEL_ID
 from src.plant_api import get_care_guidelines
-
-# Predefined action types for consistency
-CARE_ACTIONS = [
-    "WATER",      # Water the plant
-    "FERTILIZE",  # Apply fertilizer
-    "MIST",       # Mist leaves for humidity
-    "ROTATE",     # Rotate for even growth
-    "MOVE",       # Relocate (light/temp issues)
-    "PRUNE",      # Remove dead/leggy growth
-    "REPOT",      # Needs larger container
-    "CHECK",      # General inspection needed
-]
+from src.actions import CARE_ACTIONS
 
 # Minimum days before recommending each action again (safety nets)
 MIN_ACTION_INTERVALS = {

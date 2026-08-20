@@ -4,18 +4,7 @@ from src.storage import PlantDB
 from src.weather import get_forecast
 from src.agent import PlantAgent
 from src.telegram_bot import send_alert
-
-# Action icons for Telegram messages
-ACTION_ICONS = {
-    'WATER': '💧',
-    'FERTILIZE': '🧪',
-    'MIST': '💨',
-    'ROTATE': '🔄',
-    'MOVE': '📍',
-    'PRUNE': '✂️',
-    'REPOT': '🪴',
-    'CHECK': '🔍',
-}
+from src.actions import ACTION_ICONS
 
 # Priority indicators
 PRIORITY_MARKERS = {
