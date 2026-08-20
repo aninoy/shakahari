@@ -133,6 +133,23 @@ def test_log_command_from_another_chat_is_ignored(monkeypatch):
     assert sent == []
 
 
+def test_owner_chat_id_is_matched_despite_surrounding_whitespace(monkeypatch):
+    """A stray newline/space in the deployed env var would otherwise silently
+    reject the owner's own taps."""
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(recorder, "TELEGRAM_CHAT_ID", f" {OWNER_CHAT_ID}\n")
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+    monkeypatch.setattr(recorder, "edit_message_reply_markup", lambda *a, **k: None)
+    monkeypatch.setattr(recorder, "answer_callback_query", lambda *a, **k: None)
+
+    markup = {"inline_keyboard": [[{"text": "Watered", "callback_data": "t:WATER:Monstera"}]]}
+    request = FakeRequest(_callback_update("t:WATER:Monstera", markup=markup), secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    assert FakePlantDB.instances[-1].log_calls == [("Monstera", "WATER")]
+
+
 def test_task_button_logs_action_and_confirms(monkeypatch):
     monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
     monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)

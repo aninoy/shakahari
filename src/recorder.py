@@ -57,7 +57,7 @@ def _is_from_owner(update):
         chat = update.get("message", {}).get("chat", {})
 
     chat_id = chat.get("id")
-    return chat_id is not None and str(chat_id) == str(TELEGRAM_CHAT_ID)
+    return chat_id is not None and str(chat_id).strip() == str(TELEGRAM_CHAT_ID).strip()
 
 
 def _handle_callback(callback_query):
