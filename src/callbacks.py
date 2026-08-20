@@ -46,5 +46,7 @@ def decode_callback(data):
         return {"kind": "logact", "plant": parts[1], "action": parts[2]}
     if kind == "logback" and len(parts) == 1:
         return {"kind": "logback"}
+    if kind == "noop" and len(parts) == 1:
+        return {"kind": "noop"}
 
     return {"kind": "unknown"}

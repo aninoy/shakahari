@@ -81,6 +81,8 @@ def _handle_callback(callback_query):
         _handle_logact(callback_id, chat_id, message_id, parsed)
     elif kind == "logback":
         _handle_logback(callback_id, chat_id, message_id)
+    elif kind == "noop":
+        answer_callback_query(callback_id)
     else:
         answer_callback_query(callback_id, text="Sorry — I couldn't read that button.", show_alert=True)
 

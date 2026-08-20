@@ -317,6 +317,27 @@ def test_unknown_callback_data_gives_visible_feedback(monkeypatch):
     assert show_alert is True
 
 
+def test_noop_callback_is_acknowledged_silently(monkeypatch):
+    """Tapping an already-spent digest button (✓ Logged just now / ⏭ Skipped for
+    today) sends callback_data "noop". This must be acknowledged with no text and
+    no alert -- NOT routed through the "unknown" error path, which would falsely
+    tell the user something went wrong with an action that already succeeded."""
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+    answers = []
+    monkeypatch.setattr(
+        recorder, "answer_callback_query",
+        lambda callback_id, text="", show_alert=False: answers.append((callback_id, text, show_alert)),
+    )
+
+    request = FakeRequest(_callback_update("noop"), secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    assert FakePlantDB.instances == []
+    assert answers == [("cbq-1", "", False)]
+
+
 def test_malformed_callback_query_returns_200_without_crashing(monkeypatch):
     monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
     # From the owner (so it gets past the sender check) but missing "message_id" --

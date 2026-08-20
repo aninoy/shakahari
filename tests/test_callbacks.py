@@ -62,3 +62,10 @@ def test_decode_log_back():
 def test_decode_unknown_falls_back_gracefully():
     assert decode_callback("garbage:data:here:too:many:parts") == {"kind": "unknown"}
     assert decode_callback("") == {"kind": "unknown"}
+
+
+def test_decode_noop_button():
+    """Spent digest buttons (already-tapped rows) carry callback_data "noop" and
+    must decode to their own kind, distinct from "unknown", so the handler can
+    acknowledge them silently instead of showing an error."""
+    assert decode_callback("noop") == {"kind": "noop"}
