@@ -62,5 +62,127 @@
       "full sun"
     ],
     "common_name": "European Silver Fir"
+  },
+  "monstera": {
+    "watering": "Average",
+    "watering_period": "Water when top 2 inches of soil are dry, typically 7-10 days",
+    "min_watering_days": 5,
+    "max_watering_days": 10,
+    "sunlight": [
+      "Bright indirect light",
+      "Partial shade"
+    ],
+    "common_name": "Swiss Cheese Plant",
+    "_source": "Gemini AI (Grounded)"
+  },
+  "fiddle leaf fig": {
+    "watering": "Average",
+    "watering_period": "every 7-10 days",
+    "min_watering_days": 7,
+    "max_watering_days": 10,
+    "sunlight": [
+      "Bright, indirect light",
+      "Some direct morning sun"
+    ],
+    "common_name": "Fiddle Leaf Fig Tree",
+    "_source": "Gemini AI (Grounded)"
+  },
+  "yucca": {
+    "watering": "Minimum",
+    "watering_period": "every 2-4 weeks, less in winter",
+    "min_watering_days": 14,
+    "max_watering_days": 28,
+    "sunlight": [
+      "Full sun",
+      "Bright, indirect light"
+    ],
+    "common_name": "Yucca",
+    "_source": "Gemini AI (Grounded)"
+  },
+  "peace lily": {
+    "watering": "Average",
+    "watering_period": "7-14 days, or when the top 1-2 inches of soil are dry",
+    "min_watering_days": 4,
+    "max_watering_days": 14,
+    "sunlight": [
+      "Low light",
+      "Medium light",
+      "Bright indirect light",
+      "Part shade"
+    ],
+    "common_name": "Peace Lily",
+    "_source": "Gemini AI (Grounded)"
+  },
+  "bougainvillea": {
+    "watering": "Minimum",
+    "watering_period": "Allow soil to completely dry between waterings",
+    "min_watering_days": 14,
+    "max_watering_days": 21,
+    "sunlight": [
+      "Full sun",
+      "Part shade"
+    ],
+    "common_name": "Bougainvillea",
+    "_source": "Gemini AI (Grounded)"
+  },
+  "snail vine": {
+    "watering": "Frequent",
+    "watering_period": "2-4 days",
+    "min_watering_days": 2,
+    "max_watering_days": 4,
+    "sunlight": [
+      "Full sun",
+      "Part shade"
+    ],
+    "common_name": "Snail Vine",
+    "_source": "Gemini AI (Grounded)"
+  },
+  "geranium": {
+    "watering": "Frequent",
+    "watering_period": "2-4 days, allowing soil to dry slightly between waterings",
+    "min_watering_days": 2,
+    "max_watering_days": 4,
+    "sunlight": [
+      "Full sun",
+      "Part shade"
+    ],
+    "common_name": "Geranium",
+    "_source": "Gemini AI (Grounded)"
+  },
+  "crown of thorns": {
+    "watering": "Minimum",
+    "watering_period": "14-21 days",
+    "min_watering_days": 14,
+    "max_watering_days": 21,
+    "sunlight": [
+      "Full sun",
+      "Bright indirect light"
+    ],
+    "common_name": "Crown of Thorns",
+    "_source": "Gemini AI (Grounded)"
+  },
+  "azalea": {
+    "watering": "Frequent",
+    "watering_period": "2-4 days",
+    "min_watering_days": 2,
+    "max_watering_days": 4,
+    "sunlight": [
+      "Part shade",
+      "Full sun"
+    ],
+    "common_name": "Azalea",
+    "_source": "Gemini AI (Grounded)"
+  },
+  "black pagoda": {
+    "watering": "Average",
+    "watering_period": "7-10 days, or when the top 1-2 inches of soil are dry",
+    "min_watering_days": 7,
+    "max_watering_days": 10,
+    "sunlight": [
+      "Bright indirect light",
+      "Medium light"
+    ],
+    "common_name": "Black Pagoda Lipstick Plant",
+    "_source": "Gemini AI (Grounded)"
   }
 }
