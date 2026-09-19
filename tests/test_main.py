@@ -1,69 +1,6 @@
-from datetime import datetime
-
 import pytest
 
 import main as main_module
-from main import format_tasks, build_digest_keyboard
-
-
-def test_format_tasks_is_compact_with_a_days_since_code_not_prose():
-    tasks = [{
-        "name": "Monstera", "action": "WATER", "priority": "HIGH",
-        "reason": "Soil dry after 8 days, indoor heat accelerates drying",
-        "days_since": 12, "threshold": 10,
-    }]
-
-    text = format_tasks(tasks, "All good")
-
-    assert "Tap to log" not in text
-    assert "/water_monstera" not in text
-    assert "Soil dry" not in text
-    assert "Monstera" in text
-    assert "12d overdue" in text
-    assert "🔁10d" in text
-
-
-def test_format_tasks_shows_never_when_no_history_exists():
-    tasks = [{"name": "Fern", "action": "CHECK", "priority": "LOW", "days_since": None, "threshold": 3}]
-
-    text = format_tasks(tasks, "")
-
-    assert "never" in text
-
-
-def test_build_digest_keyboard_buttons_name_the_plant_with_no_skip_option():
-    tasks = [
-        {"name": "Monstera", "action": "WATER", "priority": "HIGH", "days_since": 12, "threshold": 10},
-        {"name": "Pothos", "action": "ROTATE", "priority": "LOW", "days_since": 9, "threshold": 7},
-    ]
-
-    keyboard = build_digest_keyboard(tasks)
-    rows = keyboard["inline_keyboard"]
-
-    assert rows[0] == [{"text": "💧 Water Monstera", "callback_data": "t:WATER:Monstera"}]
-    assert rows[1] == [{"text": "🔄 Rotate Pothos", "callback_data": "t:ROTATE:Pothos"}]
-    task_rows = rows[:2]
-    for row in task_rows:
-        assert len(row) == 1
-
-
-def test_build_digest_keyboard_adds_one_bulk_button_per_action_present():
-    tasks = [
-        {"name": "Monstera", "action": "WATER", "priority": "HIGH", "days_since": 12, "threshold": 10},
-        {"name": "Fern", "action": "WATER", "priority": "LOW", "days_since": 15, "threshold": 10},
-        {"name": "Pothos", "action": "ROTATE", "priority": "LOW", "days_since": 9, "threshold": 7},
-    ]
-
-    keyboard = build_digest_keyboard(tasks)
-    rows = keyboard["inline_keyboard"]
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    bulk_rows = [r for r in rows if r[0]["callback_data"].startswith("donetype:")]
-    assert bulk_rows == [
-        [{"text": "💧 Mark watering complete", "callback_data": f"donetype:WATER:{today}"}],
-        [{"text": "🔄 Mark rotating complete", "callback_data": f"donetype:ROTATE:{today}"}],
-    ]
-    assert rows[-1] == [{"text": "✅ Mark everything above done", "callback_data": f"alldone:{today}"}]
 
 
 class FakePlantDB:
@@ -114,3 +51,30 @@ def test_main_skips_mark_pending_when_the_digest_fails_to_send(fake_db, monkeypa
     out = capsys.readouterr().out
     assert "✅ Sent" not in out
     assert "❌" in out
+
+
+def test_main_sends_the_grouped_digest_with_its_keyboard(fake_db, monkeypatch):
+    """main() is orchestration only -- formatting lives in src/digest.py."""
+    sent = {}
+    monkeypatch.setattr(
+        main_module, "send_message",
+        lambda message, reply_markup=None: sent.update(text=message, markup=reply_markup) or True,
+    )
+
+    main_module.main()
+
+    assert "WATER" in sent["text"]
+    assert "Monstera" in sent["text"]
+    payloads = [b["callback_data"] for row in sent["markup"]["inline_keyboard"] for b in row]
+    assert "t:WATER:Monstera" in payloads
+
+
+def test_main_reports_a_quiet_day_without_sending(fake_db, monkeypatch, capsys):
+    monkeypatch.setattr(main_module.PlantAgent, "get_tasks",
+                        lambda self, w, i, c: ([], "All healthy"), raising=False)
+    monkeypatch.setattr(main_module, "send_message",
+                        lambda *a, **k: pytest.fail("nothing should be sent"))
+
+    main_module.main()
+
+    assert "No tasks today" in capsys.readouterr().out

@@ -1,22 +1,15 @@
 import json
 from datetime import datetime
+
 from google import genai
 from google.genai import types
+
 from src.config import GEMINI_API_KEY, MODEL_ID
 from src.plant_api import get_care_guidelines
 from src.actions import CARE_ACTIONS
-
-# Minimum days before recommending each action again (safety nets)
-MIN_ACTION_INTERVALS = {
-    "WATER": 3,       # Never recommend if watered < 3 days ago
-    "FERTILIZE": 14,  # Every 2+ weeks during growing season
-    "MIST": 2,        # Can mist every few days
-    "ROTATE": 7,      # Weekly rotation is enough
-    "MOVE": 14,       # Don't suggest moving plants frequently
-    "PRUNE": 30,      # Monthly at most
-    "REPOT": 180,     # Every 6 months minimum
-    "CHECK": 3,       # General check every few days is fine
-}
+from src.fertilizers import normalize, product_of
+from src.intervals import effective_interval
+from src.weather import derive_climate
 
 SYSTEM_PROMPT = """You are an expert botanist and plant care advisor. You have deep knowledge of:
 - Tropical houseplants, succulents, cacti, herbs, and common garden plants
@@ -26,11 +19,18 @@ SYSTEM_PROMPT = """You are an expert botanist and plant care advisor. You have d
 - Common problems (overwatering, leggy growth, pests, root rot)
 - Environmental adjustments (humidity, temperature, placement)
 
-Your goal is to analyze a plant inventory with calculated days_since_action for ALL action types. BE CONSERVATIVE - only recommend actions when sufficient time has passed since the last occurrence. The days_since_action field shows exactly how many days ago each action was performed (null means never)."""
+Each plant arrives with due_in_days already computed from local weather,
+season, irrigation method and its own care guidelines. Those numbers are
+authoritative -- an action is only worth recommending once its days_since has
+reached its due_in_days. Your judgement is for deciding which of the genuinely
+due actions actually matter today, not for overriding the schedule.
+
+BE CONSERVATIVE. An action absent from due_in_days does not apply to that plant
+at all and must never be recommended."""
 
 
-def days_since(date_str: str) -> int | None:
-    """Calculate days since a date string (YYYY-MM-DD format)."""
+def days_since(date_str):
+    """Days since a YYYY-MM-DD string, or None if absent or unparseable."""
     if not date_str or date_str == 'N/A':
         return None
     try:
@@ -44,110 +44,100 @@ class PlantAgent:
     def __init__(self):
         self.client = genai.Client(api_key=GEMINI_API_KEY)
 
+    def _build_plant(self, row, care_history, climate):
+        """One plant's context: history, care guidelines and the intervals the
+        engine computed for it. The same intervals go into the prompt and into
+        the post-filter, so the model and the safety net cannot disagree."""
+        plant_name = row.get('Name', 'Unknown')
+
+        days_by_action = {
+            "WATER": days_since(row.get('Last Watered', '')),
+            "FERTILIZE": days_since(row.get('Last Fertilized', '')),
+        }
+        if care_history and plant_name in care_history:
+            for action in ['MIST', 'ROTATE', 'MOVE', 'PRUNE', 'REPOT', 'CHECK']:
+                for record in care_history[plant_name]:
+                    if record.get('Action') == action:
+                        days = days_since(record.get('Date', ''))
+                        if days is not None:
+                            days_by_action[action] = days
+                        break
+
+        care = get_care_guidelines(plant_name)
+        fertilizer = normalize(row.get('Fertilizer'))
+
+        plant = {
+            "name": plant_name,
+            "environment": row.get('Environment', ''),
+            "watering": row.get('Watering'),
+            "fertilizer": fertilizer,
+            "notes": row.get('Notes', ''),
+        }
+
+        intervals = {}
+        for action in CARE_ACTIONS:
+            result = effective_interval(action, plant, care, climate)
+            if result is not None:
+                intervals[action] = result
+
+        plant["_care"] = care
+        plant["_intervals"] = intervals
+        plant["_days_since"] = days_by_action
+        return plant
+
+
+    def _prompt_view(self, plant):
+        """What Gemini sees: no private keys, and only actions that apply."""
+        view = {
+            "name": plant["name"],
+            "environment": plant["environment"],
+            "days_since_action": plant["_days_since"],
+            "due_in_days": {a: r["days"] for a, r in plant["_intervals"].items()},
+        }
+        if plant["fertilizer"]:
+            view["fertilizer"] = product_of(plant["fertilizer"])
+        if plant["watering"]:
+            view["watered_by"] = plant["watering"]
+        if plant["notes"]:
+            view["notes"] = plant["notes"]
+        return view
+
     def get_tasks(self, weather, inventory_df, care_history=None):
-        """Returns a list of care tasks with priorities and detailed reasoning.
-        
-        Args:
-            weather: Weather data dict from Open-Meteo
-            inventory_df: DataFrame of plant inventory
-            care_history: Optional dict of {plant_name: [{Date, Action}, ...]}
-        """
-        
+        """Returns (tasks, summary). Each task carries the days-since, the
+        computed threshold, the base it came from and the labelled adjustments
+        that moved it, so the digest can render them without re-deriving."""
         print("🌱 Building plant context with care guidelines...")
-        
-        # Build inventory with all available context
+
+        climate = derive_climate(weather)
+
         inventory = []
         for _, row in inventory_df.iterrows():
-            plant_name = row.get('Name', 'Unknown')
-            
-            # Calculate days since last care actions from sheet columns
-            days_water = days_since(row.get('Last Watered', ''))
-            days_fert = days_since(row.get('Last Fertilized', ''))
-            
-            # Calculate days since ALL action types from CareHistory
-            days_since_action = {
-                "WATER": days_water,
-                "FERTILIZE": days_fert,
-            }
-            
-            # Check CareHistory for other actions
-            if care_history and plant_name in care_history:
-                plant_history = care_history[plant_name]
-                for action in ['MIST', 'ROTATE', 'MOVE', 'PRUNE', 'REPOT', 'CHECK']:
-                    # Find most recent occurrence of this action
-                    for record in plant_history:
-                        if record.get('Action') == action:
-                            days = days_since(record.get('Date', ''))
-                            if days is not None:
-                                days_since_action[action] = days
-                                break
-            
-            # Get plant-specific care guidelines from API
-            care = get_care_guidelines(plant_name)
-            
-            plant = {
-                "name": plant_name,
-                "environment": row.get('Environment', ''),
-                "days_since_action": days_since_action,
-                "watering_guidelines": {
-                    "min_days": care["min_watering_days"],
-                    "max_days": care["max_watering_days"],
-                    "frequency": care["watering"],
-                },
-                "notes": row.get('Notes', ''),
-            }
-            
-            # Include additional environmental fields if present
-            if 'Light' in row:
-                plant['light'] = row['Light']
-            if 'Humidity' in row:
-                plant['humidity'] = row['Humidity']
-            
-            inventory.append(plant)
+            inventory.append(self._build_plant(row, care_history, climate))
 
-        # Build weather context
-        weather_context = "Unknown"
-        if weather:
-            temps = weather.get('temperature_2m_max', [])
-            precip = weather.get('precipitation_sum', [])
-            weather_context = f"""
-            - Recent temperatures (past 3 days + today): {temps}
-            - Recent precipitation (mm): {precip}
-            - Today's max temp: {temps[-1] if temps else 'N/A'}°C
-            - Today's rain: {precip[-1] if precip else 0}mm
-            """
-
-        # Format minimum intervals for prompt
-        intervals_str = ", ".join([f"{k}: {v}d" for k, v in MIN_ACTION_INTERVALS.items()])
+        by_name = {p["name"]: p for p in inventory}
 
         prompt = f"""Analyze this plant inventory and recommend care actions.
 
-## Weather Context
-{weather_context}
+## Local conditions
+{json.dumps({k: v for k, v in climate.items() if v is not None}, indent=2)}
 
 ## Plant Inventory
-Each plant has days_since_action showing days since each action type was performed (null = never done).
-{json.dumps(inventory, indent=2)}
+`days_since_action` is how many days ago each action was last performed
+(null = never). `due_in_days` is how many days should pass before that action
+is worth doing again -- already adjusted for weather, season and how the plant
+is watered.
 
-## Available Actions & Minimum Intervals
-{intervals_str}
+{json.dumps([self._prompt_view(p) for p in inventory], indent=2)}
 
-## CRITICAL Instructions
-1. Check days_since_action for EACH action type before recommending:
-   - WATER: Only if days_since >= max_days in watering_guidelines
-   - FERTILIZE: Only during growing season AND if days_since >= 14
-   - MIST: Only if days_since >= 2
-   - ROTATE: Only if days_since >= 7
-   - CHECK: Only if days_since >= 3
-   - PRUNE/REPOT: Only if clearly needed AND sufficient time has passed
-
-2. Consider weather (skip watering outdoor plants if it rained)
-
-3. For null values: action has never been done, may be needed
-
-4. Assign priority based on urgency
-
-5. Skip plants that were recently cared for.
+## Instructions
+1. Recommend an action only when its days_since_action has reached or passed
+   its due_in_days, or is null (never done).
+2. Never recommend an action that is absent from that plant's due_in_days --
+   it does not apply to that plant.
+3. Among the genuinely due actions, use judgement about what matters today.
+   Skip anything marginal.
+4. Assign priority by urgency: how far past due, and how much the plant suffers
+   if it waits.
 
 ## Output Format
 Return valid JSON:
@@ -156,14 +146,14 @@ Return valid JSON:
     {{
       "name": "PlantName",
       "action": "ACTION_TYPE",
-      "priority": "HIGH|MEDIUM|LOW", 
-      "reason": "Brief explanation including days since last action"
+      "priority": "HIGH|MEDIUM|LOW",
+      "reason": "Brief explanation"
     }}
   ],
   "summary": "One-line overall assessment"
 }}
 
-If no actions needed, return {{"tasks": [], "summary": "All plants look healthy!"}}.
+If no actions are needed, return {{"tasks": [], "summary": "All plants look healthy!"}}.
 """
 
         try:
@@ -176,36 +166,39 @@ If no actions needed, return {{"tasks": [], "summary": "All plants look healthy!
                 )
             )
             result = json.loads(response.text)
-            tasks = result.get('tasks', [])
-            
-            # Post-process: Filter out actions that are too soon based on MIN_ACTION_INTERVALS
-            filtered_tasks = []
-            for task in tasks:
-                action = task.get('action', '').upper()
-                plant_name = task.get('name')
-
-                # Check minimum interval for this action
-                min_interval = MIN_ACTION_INTERVALS.get(action, 0)
-                plant_data = next((p for p in inventory if p['name'] == plant_name), None)
-                days = plant_data.get('days_since_action', {}).get(action) if plant_data else None
-
-                if plant_data and min_interval > 0:
-                    if days is not None and days < min_interval:
-                        print(f"   ⏭️ Filtered {action} for {plant_name} (only {days} days, min={min_interval})")
-                        continue
-
-                # Deterministic days-since/threshold, computed here rather than left to
-                # Gemini's prose "reason" -- lets the digest render a compact code
-                # ("12d>=10d") without depending on how verbose the model feels like being.
-                threshold = min_interval
-                if action == 'WATER' and plant_data:
-                    threshold = plant_data['watering_guidelines']['max_days']
-
-                task['days_since'] = days
-                task['threshold'] = threshold
-                filtered_tasks.append(task)
-            
-            return filtered_tasks, result.get('summary', '')
         except Exception as e:
             print(f"❌ Gemini Error: {e}")
             return [], ""
+
+        return self._filter(result.get('tasks', []), by_name), result.get('summary', '')
+
+    def _filter(self, tasks, by_name):
+        """Enforce the same intervals the prompt showed the model."""
+        kept = []
+        for task in tasks:
+            action = (task.get('action') or '').upper()
+            plant = by_name.get(task.get('name'))
+
+            if plant is None:
+                print(f"   ⏭️ Dropped {action} for unknown plant {task.get('name')!r}")
+                continue
+
+            interval = plant["_intervals"].get(action)
+            if interval is None:
+                print(f"   ⏭️ Dropped {action} for {plant['name']} (does not apply)")
+                continue
+
+            days = plant["_days_since"].get(action)
+            if days is not None and days < interval["days"]:
+                print(f"   ⏭️ Filtered {action} for {plant['name']} "
+                      f"({days}d, due at {interval['days']}d)")
+                continue
+
+            task['days_since'] = days
+            task['threshold'] = interval["days"]
+            task['base'] = interval["base"]
+            task['adjustments'] = interval["adjustments"]
+            task['fertilizer'] = plant["fertilizer"]
+            kept.append(task)
+
+        return kept

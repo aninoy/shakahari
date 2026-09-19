@@ -1,78 +1,10 @@
-from datetime import datetime
 from src.config import MODEL_ID
 from src.storage import PlantDB
 from src.weather import get_forecast
 from src.agent import PlantAgent
 from src.telegram_bot import send_message
-from src.actions import ACTION_ICONS, ACTION_GERUNDS, CARE_ACTIONS
-from src.callbacks import encode_task_button, encode_alldone, encode_action_done
+from src.digest import format_digest, build_keyboard
 from src.recorder import telegram_webhook  # noqa: F401 -- Cloud Function entry point, unused by the Advisor
-
-# Priority indicators
-PRIORITY_MARKERS = {
-    'HIGH': '🔴',
-    'MEDIUM': '🟡',
-    'LOW': '🟢',
-}
-
-
-def format_tasks(tasks, summary):
-    """Format tasks into a compact digest: one line per task showing a
-    deterministic days-since-vs-threshold code instead of Gemini's prose."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    lines = [f"🌿 <b>Plant Care Tasks ({today})</b>"]
-
-    if summary:
-        lines.append(f"<i>{summary}</i>")
-
-    lines.append("")
-    for t in tasks:
-        lines.append(_format_task_line(t))
-
-    return "\n".join(lines)
-
-
-def _format_task_line(t):
-    action = t.get('action', 'CHECK').upper()
-    icon = ACTION_ICONS.get(action, '📋')
-    name = t.get('name', 'Unknown')
-    priority = t.get('priority', '').upper()
-    marker = PRIORITY_MARKERS.get(priority, '')
-
-    days = t.get('days_since')
-    threshold = t.get('threshold')
-    since = "never" if days is None else f"{days}d overdue"
-    code = f"{since} · 🔁{threshold}d" if threshold else since
-
-    return f"{marker}{icon} <b>{name}</b> — {code}"
-
-
-def build_digest_keyboard(tasks):
-    """One named button per task, one bulk "Mark X complete" button per action
-    type present, plus a final mark-everything row."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    rows = []
-    present_actions = []
-    for t in tasks:
-        action = t.get('action', 'CHECK').upper()
-        name = t.get('name', 'Unknown')
-        icon = ACTION_ICONS.get(action, '📋')
-        rows.append([
-            {"text": f"{icon} {action.title()} {name}", "callback_data": encode_task_button(action, name)},
-        ])
-        if action not in present_actions:
-            present_actions.append(action)
-
-    for action in CARE_ACTIONS:
-        if action in present_actions:
-            icon = ACTION_ICONS.get(action, '📋')
-            gerund = ACTION_GERUNDS.get(action, action.lower())
-            rows.append([
-                {"text": f"{icon} Mark {gerund} complete", "callback_data": encode_action_done(action, today)},
-            ])
-
-    rows.append([{"text": "✅ Mark everything above done", "callback_data": encode_alldone(today)}])
-    return {"inline_keyboard": rows}
 
 
 def main():
@@ -99,8 +31,8 @@ def main():
 
     # 5. Notify & Update Status
     if tasks:
-        message = format_tasks(tasks, summary)
-        keyboard = build_digest_keyboard(tasks)
+        message = format_digest(tasks, summary)
+        keyboard = build_keyboard(tasks)
         if send_message(message, reply_markup=keyboard):
             db.mark_pending(tasks)
             print(f"✅ Sent {len(tasks)} care recommendations.")
