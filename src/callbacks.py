@@ -18,6 +18,15 @@ def encode_action_done(action, date):
     return f"donetype:{action}:{date}"
 
 
+def encode_fert_done(code, date):
+    """Bulk-confirm one fertilizer product.
+
+    A distinct kind rather than an overload of `donetype`: the recorder
+    prefix-matches `donetype:{action}:`, so reusing it would make FERTILIZE
+    collide with itself across products."""
+    return f"donefert:{code}:{date}"
+
+
 def encode_log_select(plant_name):
     return f"logsel:{plant_name}"
 
@@ -40,6 +49,8 @@ def decode_callback(data):
         return {"kind": "alldone", "date": parts[1]}
     if kind == "donetype" and len(parts) == 3:
         return {"kind": "donetype", "action": parts[1], "date": parts[2]}
+    if kind == "donefert" and len(parts) == 3:
+        return {"kind": "donefert", "code": parts[1], "date": parts[2]}
     if kind == "logsel" and len(parts) == 2:
         return {"kind": "logsel", "plant": parts[1]}
     if kind == "logact" and len(parts) == 3:
