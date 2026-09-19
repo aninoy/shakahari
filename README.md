@@ -254,9 +254,9 @@ What moves an interval:
 
 | Signal | Effect |
 |--------|--------|
-| **Evapotranspiration (ET₀)** | The core watering driver — it already folds in heat, humidity, sun and wind. Scales the interval inversely, clamped to ±40%. Damped for `established` plantings, whose deep roots buffer a hot week in a way a pot cannot. |
+| **Evapotranspiration (ET₀)** | The core watering driver — it already folds in heat, humidity, sun and wind. Scales the interval inversely, clamped to −40%/+50%. Damped for `established` plantings, whose deep roots buffer a hot week in a way a pot cannot. |
 | **Rain, past and forecast** | Recent rain defers outdoor watering; *incoming* rain defers it too, and defers outdoor feeding (it would wash off before uptake). Indoor plants ignore rain entirely. |
-| **Humidity** | Above 60% RH misting is dropped altogether rather than merely stretched — it achieves nothing. Very dry air shortens watering slightly. |
+| **Humidity** | Misting runs in three bands: normal below 35% RH, stretched ×3 between 35–60%, and dropped altogether above 60% where it achieves nothing. Very dry air shortens watering slightly. |
 | **Season** | Taken from `daylight_duration`, not a hardcoded month table, so it stays correct anywhere. Feeding is **suppressed entirely in dormancy** (≈ Nov–Feb in LA) and stretched in shoulder season. |
 | **Fertilizer product** | Each product carries its own cadence: bloom booster every 10d, acid feed every 35d, succulents every 120d. |
 | **Irrigation** | `sprinkler`/`drip` suppress watering and misting; in-ground plantings suppress rotate, repot and move. |
@@ -271,8 +271,15 @@ Two rules keep the digest from filling with things you would never act on:
   water or feed it, you are looking at it — so `CHECK` only earns a line for
   plants nothing else brings you to.
 
-Whatever the modifiers do, every interval is clamped to a per-action floor and
-ceiling (watering can never be recommended more often than every 2 days).
+Whatever the modifiers do, watering is floored at the plant's own
+`min_watering_days` from its care guidelines — weather can stretch a schedule
+freely but never push a plant below its documented minimum, since overwatering
+is the actual failure mode for the succulent-adjacent ones. Every interval is
+then clamped to a per-action floor and ceiling on top of that.
+
+`CareHistory` is read as *the most recent entry per action*, not the most
+recent N rows — a flat row window would drop `PRUNE` and `REPOT` as soon as a
+plant accrued a few waterings, making them permanently unreachable.
 
 ### Previewing without sending
 

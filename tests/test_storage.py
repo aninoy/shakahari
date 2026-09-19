@@ -189,3 +189,101 @@ def test_mark_fertilizer_done_survives_a_sheet_without_the_column():
          "Status": "PENDING_FERTILIZE"},
     ])
     assert db.mark_fertilizer_done("CITRUS", date="2026-09-19") == []
+
+
+# --- composite status parsing ---------------------------------------------
+
+def test_fertilizer_confirmation_works_whatever_order_the_status_was_built_in():
+    """mark_pending appends actions in whatever order Gemini emitted them, so
+    'PENDING_WATER_FERTILIZE' is just as common as 'PENDING_FERTILIZE_WATER'.
+    Substring matching on 'PENDING_FERTILIZE' silently misses the first."""
+    for status in ["PENDING_FERTILIZE",
+                   "PENDING_FERTILIZE_WATER",
+                   "PENDING_WATER_FERTILIZE",
+                   "PENDING_WATER_CHECK_FERTILIZE"]:
+        db = make_db([{"Name": "Avocado", "Last Watered": "", "Last Fertilized": "",
+                       "Status": status, "Fertilizer": "CITRUS"}])
+
+        marked = db.mark_fertilizer_done("CITRUS", date="2026-09-19")
+
+        assert marked == ["Avocado"], f"missed {status}"
+        assert db.df.at[0, "Last Fertilized"] == "2026-09-19", f"missed {status}"
+        assert "FERTILIZE" not in db.df.at[0, "Status"], f"stale status for {status}"
+
+
+def test_mark_action_done_works_whatever_order_the_status_was_built_in():
+    for status in ["PENDING_WATER", "PENDING_ROTATE_WATER", "PENDING_WATER_ROTATE"]:
+        db = make_db([{"Name": "Monstera", "Last Watered": "", "Last Fertilized": "",
+                       "Status": status}])
+
+        assert db.mark_action_done("WATER", date="2026-09-19") == 1, f"missed {status}"
+        assert db.df.at[0, "Last Watered"] == "2026-09-19"
+
+
+def test_clearing_one_action_leaves_the_others_wherever_they_sat():
+    db = make_db([{"Name": "Pothos", "Last Watered": "", "Last Fertilized": "",
+                   "Status": "PENDING_WATER_CHECK_FERTILIZE"}])
+
+    db.log_task_action("Pothos", "FERTILIZE", date="2026-09-19")
+
+    assert db.df.at[0, "Status"] == "PENDING_WATER_CHECK"
+
+
+def test_clearing_the_only_action_returns_the_row_to_ok():
+    db = make_db([{"Name": "Pothos", "Last Watered": "", "Last Fertilized": "",
+                   "Status": "PENDING_FERTILIZE"}])
+
+    db.log_task_action("Pothos", "FERTILIZE", date="2026-09-19")
+
+    assert db.df.at[0, "Status"] == "OK"
+
+
+def test_an_action_name_that_is_a_substring_of_another_is_not_confused():
+    """Guards the token parse: naive matching could see MOVE inside a longer
+    composite or clear the wrong entry."""
+    db = make_db([{"Name": "Pothos", "Last Watered": "", "Last Fertilized": "",
+                   "Status": "PENDING_REPOT_MOVE"}])
+
+    db.log_task_action("Pothos", "MOVE", date="2026-09-19")
+
+    assert db.df.at[0, "Status"] == "PENDING_REPOT"
+
+
+def test_mark_all_done_logs_every_action_in_a_composite_status():
+    db = make_db([{"Name": "Pothos", "Last Watered": "", "Last Fertilized": "",
+                   "Status": "PENDING_WATER_FERTILIZE_ROTATE"}])
+
+    assert db.mark_all_done(date="2026-09-19") == 1
+
+    logged = {r[2] for r in db.history_ws.appended_rows}
+    assert logged == {"WATER", "FERTILIZE", "ROTATE"}
+    assert db.df.at[0, "Last Watered"] == "2026-09-19"
+    assert db.df.at[0, "Last Fertilized"] == "2026-09-19"
+    assert db.df.at[0, "Status"] == "OK"
+
+
+# --- history window -------------------------------------------------------
+
+def test_history_summary_keeps_the_latest_of_each_action_not_the_latest_n_rows():
+    """The interval engine reads days-since for six actions out of CareHistory.
+    A flat 'most recent N rows' window drops PRUNE and REPOT as soon as a plant
+    accrues a few waterings, making them permanently unreachable."""
+    db = PlantDB.__new__(PlantDB)
+    db.df = pd.DataFrame([{"Name": "Fig"}])
+    db.history_ws = FakeWorksheet()
+    db.history_ws.get_all_records = lambda: [
+        {"Date": "2026-09-18", "Plant": "Fig", "Action": "WATER", "Notes": ""},
+        {"Date": "2026-09-17", "Plant": "Fig", "Action": "WATER", "Notes": ""},
+        {"Date": "2026-09-16", "Plant": "Fig", "Action": "MIST", "Notes": ""},
+        {"Date": "2026-09-15", "Plant": "Fig", "Action": "WATER", "Notes": ""},
+        {"Date": "2026-09-14", "Plant": "Fig", "Action": "ROTATE", "Notes": ""},
+        {"Date": "2026-08-20", "Plant": "Fig", "Action": "PRUNE", "Notes": ""},
+    ]
+
+    summary = db.get_history_summary()
+    actions = {r["Action"]: r["Date"] for r in summary["Fig"]}
+
+    assert actions["PRUNE"] == "2026-08-20", "PRUNE fell out of the window"
+    assert actions["WATER"] == "2026-09-18", "kept a stale WATER over the newest"
+    assert actions["MIST"] == "2026-09-16"
+    assert actions["ROTATE"] == "2026-09-14"

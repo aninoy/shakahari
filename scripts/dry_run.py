@@ -79,7 +79,9 @@ def print_table():
 
 def _rows(live):
     from src.storage import PlantDB
-    df = PlantDB().get_inventory()
+    db = PlantDB()
+    _rows.history = db.get_history_summary()
+    df = db.get_inventory()
     rows = df.to_dict("records")
 
     if live:
@@ -126,7 +128,7 @@ def main():
     lines = []
     for row in rows:
         # Same path the real run takes -- no parallel reimplementation to drift.
-        plant = build_plant_context(row, care_history=None, climate=climate)
+        plant = build_plant_context(row, getattr(_rows, "history", None), climate)
 
         cells = []
         for action in CARE_ACTIONS:

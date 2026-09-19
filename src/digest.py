@@ -10,10 +10,15 @@ real-world act with one product, not a claim that four different fertilizers
 were applied at once.
 """
 
+import html
 from datetime import datetime
 
 from src.actions import ACTION_ICONS, ACTION_GERUNDS, CARE_ACTIONS
 from src.callbacks import encode_task_button, encode_alldone, encode_action_done, encode_fert_done
+
+# Telegram rejects the whole sendMessage if any callback_data exceeds this, so
+# one absurd plant name would otherwise take the entire digest down with it.
+MAX_CALLBACK_BYTES = 64
 from src.fertilizers import product_of, strength_of, icon_of
 
 PRIORITY_MARKERS = {
@@ -92,7 +97,7 @@ def _subgroup_fertilizer(members):
     for t in members:
         code = _fert_code(t)
         label = product_of(code) or NOT_SET_HEADING
-        buckets.setdefault(label, {"icon": icon_of(code) or "❓", "tasks": []})
+        buckets.setdefault(label, {"icon": icon_of(code) or "", "tasks": []})
         buckets[label]["tasks"].append(t)
 
     def order(item):
@@ -128,7 +133,10 @@ def _threshold_code(task):
 
 def _task_line(task, annotate_strength=False):
     marker = PRIORITY_MARKERS.get((task.get('priority') or '').upper(), '')
-    name = task.get('name', 'Unknown')
+    # Sent with parse_mode=HTML: an unescaped '<' in a plant name makes Telegram
+    # reject the message, and main() then leaves everything unmarked, so the
+    # failure repeats every day until someone notices.
+    name = html.escape(str(task.get('name', 'Unknown')))
 
     parts = [f"{marker} <b>{name}</b>"]
 
@@ -149,7 +157,9 @@ def format_digest(tasks, summary):
     today = datetime.now().strftime("%Y-%m-%d")
     lines = [f"🌿 <b>Plant Care Tasks ({today})</b>"]
     if summary:
-        lines.append(f"<i>{summary}</i>")
+        # Free-form model output, regenerated every run -- one stray '<' would
+        # silently stop the digest.
+        lines.append(f"<i>{html.escape(str(summary))}</i>")
 
     for action, members in _group_tasks(tasks):
         icon = ACTION_ICONS.get(action, '📋')
@@ -159,7 +169,10 @@ def format_digest(tasks, summary):
 
         if action == "FERTILIZE":
             for label, fert_icon, bucket in _subgroup_fertilizer(members):
-                lines.append(f"  {fert_icon} <b>{label}</b>")
+                heading = html.escape(label)
+                # NOT_SET_HEADING carries its own icon already.
+                prefix = f"{fert_icon} " if fert_icon else ""
+                lines.append(f"  {prefix}<b>{heading}</b>")
                 lines.extend(_task_line(t, annotate_strength=True) for t in bucket)
         else:
             lines.extend(_task_line(t) for t in members)
@@ -180,23 +193,33 @@ def build_keyboard(tasks):
         for t in members:
             icon = ACTION_ICONS.get(action, '📋')
             name = t.get('name', 'Unknown')
+            payload = encode_task_button(action, name)
+            if len(payload.encode("utf-8")) > MAX_CALLBACK_BYTES:
+                print(f"⚠️ Skipping button for {name!r}: callback_data too long")
+                continue
             rows.append([{
                 "text": f"{icon} {action.title()} {name}",
-                "callback_data": encode_task_button(action, name),
+                "callback_data": payload,
             }])
 
+        seen = []
         if action == "FERTILIZE":
-            seen = []
             for t in members:
                 code = _fert_code(t)
                 if code and code not in seen:
                     seen.append(code)
+
+        if seen:
             for code in seen:
                 rows.append([{
                     "text": f"{icon_of(code)} Mark {product_of(code)} done",
                     "callback_data": encode_fert_done(code, today),
                 }])
         else:
+            # No products known -- during the migration window that is every
+            # plant. A single catch-all is unambiguous precisely because no
+            # product is assigned; once any is, the per-product buttons take
+            # over and no catch-all is offered.
             icon = ACTION_ICONS.get(action, '📋')
             gerund = ACTION_GERUNDS.get(action, action.lower())
             rows.append([{

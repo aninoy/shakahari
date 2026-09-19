@@ -322,3 +322,68 @@ def test_an_unrecognized_priority_does_not_crash_the_ordering():
         task("B", "WATER", priority=""),
     ], "")
     assert "A" in text and "B" in text
+
+
+# --- migration window and rendering fixes ---------------------------------
+
+def test_fertilizing_keeps_a_bulk_button_when_no_products_are_assigned_yet():
+    """During the migration window the sheet has no Fertilizer column at all.
+    Emitting zero bulk buttons is a regression from the previous behaviour;
+    with no products known there is no ambiguity to guard against."""
+    kb = build_keyboard([
+        task("Monstera", "FERTILIZE", fertilizer=None),
+        task("Peace Lily", "FERTILIZE", fertilizer=None),
+    ])
+    payloads = [b["callback_data"] for row in kb["inline_keyboard"] for b in row]
+
+    assert any(p.startswith(f"donetype:FERTILIZE:{TODAY}") for p in payloads)
+
+
+def test_a_partly_assigned_sheet_gets_products_only_no_catch_all():
+    """Once any product is known, a catch-all button would claim the unassigned
+    plants too -- exactly the cross-product bug being fixed."""
+    kb = build_keyboard([
+        task("Avocado", "FERTILIZE", fertilizer="CITRUS"),
+        task("Mint", "FERTILIZE", fertilizer=None),
+    ])
+    payloads = [b["callback_data"] for row in kb["inline_keyboard"] for b in row]
+
+    assert f"donefert:CITRUS:{TODAY}" in payloads
+    assert not any(p.startswith("donetype:FERTILIZE") for p in payloads)
+
+
+def test_the_not_set_heading_is_not_double_iconed():
+    text = format_digest([task("Mint", "FERTILIZE", fertilizer=None)], "")
+    assert "❓ ❓" not in text
+
+
+def test_plant_names_are_escaped_for_telegrams_html_parser():
+    text = format_digest([task("Fig <rare>", "WATER")], "")
+    assert "<rare>" not in text
+    assert "&lt;rare&gt;" in text
+
+
+def test_the_model_summary_is_escaped_too():
+    """summary is free-form LLM text regenerated every run; one '<' would make
+    Telegram reject the whole message and the digest would silently stop."""
+    text = format_digest([task("A", "WATER")], "Temps < 30C mean less watering")
+    assert "< 30C" not in text
+    assert "&lt; 30C" in text
+
+
+def test_escaping_does_not_break_the_intentional_bold_markup():
+    text = format_digest([task("Monstera", "WATER")], "fine")
+    assert "<b>Monstera</b>" in text
+
+
+def test_a_plant_name_too_long_for_a_callback_payload_is_dropped_not_sent():
+    """Telegram rejects the entire sendMessage if any callback_data exceeds 64
+    bytes -- one absurd name must not take the whole digest down with it."""
+    kb = build_keyboard([
+        task("M" * 200, "WATER"),
+        task("Monstera", "WATER"),
+    ])
+    payloads = [b["callback_data"] for row in kb["inline_keyboard"] for b in row]
+
+    assert all(len(p.encode("utf-8")) <= 64 for p in payloads)
+    assert "t:WATER:Monstera" in payloads

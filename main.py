@@ -23,7 +23,7 @@ def main():
         print("⚠️ Continuing without weather data...")
 
     # 3. Get Care History for context
-    care_history = db.get_history_summary(limit_per_plant=5)
+    care_history = db.get_history_summary()
 
     # 4. Agent Reasoning
     agent = PlantAgent()

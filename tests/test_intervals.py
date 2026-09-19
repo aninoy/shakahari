@@ -346,3 +346,69 @@ def test_misting_still_applies_in_genuinely_dry_air():
 
 def test_unknown_humidity_leaves_misting_available():
     assert effective_interval("MIST", plant(), CARE, climate(humidity_mean=None)) is not None
+
+
+# --- the plant's own documented minimum ------------------------------------
+
+def test_watering_never_undercuts_the_plants_own_minimum():
+    """plant_api already gives us min_watering_days. Under LA summer conditions
+    the ET0 and dry-air modifiers compound to ~-46%, which pushed six real
+    plants -- including two near-succulents -- below their documented floor."""
+    summer = climate(et0_mean_3d=5.5, humidity_mean=32)
+    succulent_care = {"min_watering_days": 14, "max_watering_days": 21}
+
+    result = effective_interval("WATER", plant(environment="outdoor"), succulent_care, summer)
+
+    assert result["days"] >= succulent_care["min_watering_days"]
+
+
+def test_the_minimum_floor_does_not_stop_intervals_from_stretching():
+    wet = climate(et0_mean_3d=ET0_REFERENCE * 0.5)
+    care = {"min_watering_days": 5, "max_watering_days": 10}
+
+    assert effective_interval("WATER", plant(), care, wet)["days"] > 10
+
+
+def test_a_missing_minimum_is_simply_not_applied():
+    assert effective_interval("WATER", plant(), {"max_watering_days": 10}, climate()) is not None
+
+
+def test_a_nonsensical_minimum_above_the_maximum_does_not_invert_the_schedule():
+    """Cache entries are third-party data; min > max must not produce a longer
+    interval than the plant's own maximum."""
+    result = effective_interval(
+        "WATER", plant(), {"min_watering_days": 40, "max_watering_days": 10}, climate())
+    assert result["days"] <= 10
+
+
+# --- graded misting --------------------------------------------------------
+
+def test_misting_is_stretched_in_middling_humidity_not_fired_every_two_days():
+    """Between dry and humid, misting helps a little -- not every 2 days for
+    every plant, which is a standing digest entry nobody acts on."""
+    middling = effective_interval("MIST", plant(), CARE, climate(humidity_mean=48))
+    arid = effective_interval("MIST", plant(), CARE, climate(humidity_mean=20))
+
+    assert middling is not None
+    assert middling["days"] > arid["days"]
+
+
+def test_adjustments_that_changed_nothing_are_not_reported():
+    """'🔁4d→2d (high ET₀, dry air)' should not credit a modifier worth 0 days."""
+    result = effective_interval(
+        "WATER", plant(environment="outdoor"),
+        {"max_watering_days": 3}, climate(et0_mean_3d=ET0_REFERENCE * 1.4, humidity_mean=20))
+    if result["adjustments"]:
+        assert all(delta != 0 for _, delta in result["adjustments"])
+
+
+def test_hand_typed_irrigation_phrases_resolve_rather_than_falling_back():
+    """'drip irrigation' in the sheet must not silently become manual."""
+    for value in ["drip irrigation", "Sprinkler system", "SPRINKLER", " drip "]:
+        p = plant(environment="outdoor", watering=value)
+        assert effective_interval("WATER", p, CARE, climate()) is None, value
+
+
+def test_an_unrecognized_irrigation_value_still_errs_toward_reminding():
+    p = plant(environment="outdoor", watering="who knows")
+    assert effective_interval("WATER", p, CARE, climate()) is not None

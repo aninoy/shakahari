@@ -170,14 +170,14 @@ def _replace_fert_rows(current_markup, code, product, plant_names, date):
     Unlike _replace_action_rows this matches an explicit name list rather than
     a callback prefix: FERTILIZE rows for other products share the t:FERTILIZE:
     prefix and must survive untouched."""
-    done_payloads = {encode_task_button("FERTILIZE", name) for name in plant_names}
+    by_payload = {encode_task_button("FERTILIZE", name): name for name in plant_names}
     bulk_payload = encode_fert_done(code, date)
     updated_rows = []
     for row in current_markup.get("inline_keyboard", []):
         row_data = [btn.get("callback_data") or "" for btn in row]
-        task_match = next((cd for cd in row_data if cd in done_payloads), None)
+        task_match = next((cd for cd in row_data if cd in by_payload), None)
         if task_match:
-            plant_name = task_match[len("t:FERTILIZE:"):]
+            plant_name = by_payload[task_match]
             updated_rows.append([{"text": f"✓ Fertilize {plant_name} — {date}", "callback_data": "noop"}])
         elif bulk_payload in row_data:
             updated_rows.append([{

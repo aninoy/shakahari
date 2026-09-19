@@ -9,6 +9,30 @@ from src.fertilizers import normalize, product_of
 HISTORY_WORKSHEET = "CareHistory"
 HISTORY_HEADERS = ["Date", "Plant", "Action", "Notes"]
 
+PENDING_PREFIX = "PENDING_"
+
+
+def pending_actions(status):
+    """The set of actions a composite Status string is pending.
+
+    Status strings are built by appending, so the same pending set can appear
+    as PENDING_WATER_FERTILIZE or PENDING_FERTILIZE_WATER depending only on the
+    order the agent emitted its tasks. Substring matching on PENDING_{action}
+    therefore finds the action only when it happens to come first -- parse into
+    tokens instead so order cannot matter."""
+    text = str(status or "")
+    if not text.startswith(PENDING_PREFIX):
+        return set()
+    return {part for part in text[len(PENDING_PREFIX):].split("_") if part}
+
+
+def _compose_status(actions):
+    return PENDING_PREFIX + "_".join(actions) if actions else "OK"
+
+
+def _is_pending(status, action):
+    return action in pending_actions(status)
+
 
 class PlantDB:
     def __init__(self):
@@ -67,20 +91,29 @@ class PlantDB:
         df = df.sort_values('Date', ascending=False).head(limit)
         return df.to_dict('records')
 
-    def get_history_summary(self, limit_per_plant=3):
-        """Get recent care summary for all plants (for agent context)."""
+    def get_history_summary(self, limit_per_plant=None):
+        """Most recent occurrence of each action, per plant.
+
+        Deliberately per-action rather than "the latest N rows": the interval
+        engine reads days-since for six actions out of CareHistory, and a flat
+        row window drops PRUNE and REPOT as soon as a plant accrues a few
+        waterings -- which would make those actions permanently unreachable.
+
+        limit_per_plant is accepted for backwards compatibility and ignored."""
         records = self.history_ws.get_all_records()
         if not records:
             return {}
-        
+
         df = pd.DataFrame(records)
         summary = {}
-        
+
         for plant in self.df['Name'].unique():
-            plant_history = df[df['Plant'] == plant].sort_values('Date', ascending=False).head(limit_per_plant)
-            if not plant_history.empty:
-                summary[plant] = plant_history[['Date', 'Action']].to_dict('records')
-        
+            plant_history = df[df['Plant'] == plant].sort_values('Date', ascending=False)
+            if plant_history.empty:
+                continue
+            latest = plant_history.drop_duplicates(subset='Action', keep='first')
+            summary[plant] = latest[['Date', 'Action']].to_dict('records')
+
         return summary
 
     def log_action(self, plant_name, action, date=None, notes=""):
@@ -117,7 +150,7 @@ class PlantDB:
         if not date:
             date = datetime.now().strftime('%Y-%m-%d')
 
-        mask_pending = self.df['Status'].str.contains(f'PENDING_{action}', na=False, regex=False)
+        mask_pending = self.df['Status'].apply(lambda s: _is_pending(s, action))
         updated = 0
         for idx, row in self.df[mask_pending].iterrows():
             plant_name = row['Name']
@@ -150,8 +183,7 @@ class PlantDB:
         product = product_of(code) or code
         marked = []
 
-        mask_pending = self.df['Status'].str.contains(
-            'PENDING_FERTILIZE', na=False, regex=False)
+        mask_pending = self.df['Status'].apply(lambda s: _is_pending(s, 'FERTILIZE'))
         for idx, row in self.df[mask_pending].iterrows():
             if normalize(row.get('Fertilizer')) != code:
                 continue
@@ -168,35 +200,35 @@ class PlantDB:
         return marked
 
     def _clear_pending(self, idx, action):
-        """Remove one action from a row's composite PENDING_ status string."""
+        """Remove one action from a row's composite PENDING_ status string.
+
+        Order-independent: the remaining actions keep their original sequence so
+        the cell stays stable across edits."""
         current = str(self.df.at[idx, 'Status'])
-        if f'PENDING_{action}' not in current:
+        remaining = pending_actions(current)
+        if action not in remaining:
             return
-        new_status = current.replace(f'PENDING_{action}', '').strip('_')
-        if new_status and not new_status.startswith('PENDING'):
-            new_status = f'PENDING_{new_status}'
-        self.df.at[idx, 'Status'] = new_status if new_status else 'OK'
+        ordered = [a for a in current[len(PENDING_PREFIX):].split("_")
+                   if a and a != action]
+        self.df.at[idx, 'Status'] = _compose_status(ordered)
 
     def mark_all_done(self, date=None):
         """Confirm every plant's pending actions at once. Returns the number of plants updated."""
         if not date:
             date = datetime.now().strftime('%Y-%m-%d')
 
-        mask_pending = self.df['Status'].str.startswith('PENDING', na=False)
+        mask_pending = self.df['Status'].apply(lambda s: bool(pending_actions(s)))
         updated = 0
         for idx, row in self.df[mask_pending].iterrows():
-            status = row['Status']
             plant_name = row['Name']
+            actions = pending_actions(row['Status'])
 
-            if 'WATER' in status:
+            if 'WATER' in actions:
                 self.df.at[idx, 'Last Watered'] = date
-                self.log_action(plant_name, 'WATER', date=date, notes='Confirmed via Mark all done')
-            if 'FERT' in status:
+            if 'FERTILIZE' in actions:
                 self.df.at[idx, 'Last Fertilized'] = date
-                self.log_action(plant_name, 'FERTILIZE', date=date, notes='Confirmed via Mark all done')
-            for action in ['MIST', 'ROTATE', 'MOVE', 'PRUNE', 'REPOT', 'CHECK']:
-                if action in status:
-                    self.log_action(plant_name, action, date=date, notes='Confirmed via Mark all done')
+            for action in actions:
+                self.log_action(plant_name, action, date=date, notes='Confirmed via Mark all done')
 
             self.df.at[idx, 'Status'] = 'OK'
             updated += 1
@@ -217,22 +249,16 @@ class PlantDB:
             mask = self.df['Name'] == name
             if mask.any():
                 current = str(self.df.loc[mask, 'Status'].values[0])
-                
-                # Check if this action is already pending (avoid duplicates like CHECK_CHECK)
-                # Split current status into parts and check if action already exists
-                current_actions = current.replace('PENDING_', '').split('_') if current.startswith('PENDING') else []
-                
-                if action in current_actions:
-                    # Action already pending, skip
+
+                if action in pending_actions(current):
                     print(f"⏭️ {action} already pending for {name}, skipping")
                     continue
-                
-                # Build composite status if multiple actions
-                if current.startswith('PENDING'):
+
+                if current.startswith(PENDING_PREFIX):
                     new_status = f"{current}_{action}"
                 else:
-                    new_status = f"PENDING_{action}"
-                
+                    new_status = f"{PENDING_PREFIX}{action}"
+
                 self.df.loc[mask, 'Status'] = new_status
         
         self.save()

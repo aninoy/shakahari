@@ -11,7 +11,7 @@ post-filter, so the model and the safety net can no longer disagree.
 """
 
 from src.fertilizers import interval_of
-from src.weather import GROWING, SHOULDER, DORMANT
+from src.weather import SHOULDER, DORMANT
 
 # Irrigation methods, from the Plants sheet's `Watering` column.
 MANUAL = "manual"
@@ -32,8 +32,9 @@ ET0_MULTIPLIER_RANGE = (0.6, 1.5)
 # Deep-rooted plantings feel only this fraction of the evaporative swing.
 ESTABLISHED_DAMPING = 0.3
 
-DRY_AIR_RH = 35          # below this, indoor air pulls water out noticeably
+DRY_AIR_RH = 35          # below this, air pulls water out noticeably
 HUMID_AIR_RH = 60        # above this, misting achieves nothing at all
+MIST_MIDDLING_MULTIPLIER = 3.0
 
 RAIN_PAST_THRESHOLD_MM = 10.0    # a real soaking in the last three days
 RAIN_AHEAD_THRESHOLD_MM = 5.0    # enough incoming rain to wait for
@@ -56,6 +57,10 @@ BASE_INTERVALS = {
 
 # Hard floors and ceilings. Whatever the modifiers do, the result lands here --
 # these are the surviving descendant of the old MIN_ACTION_INTERVALS.
+#
+# Only WATER, FERTILIZE, MIST and CHECK currently have modifiers that can move
+# them; MOVE, PRUNE and REPOT always return their base, so their entries are
+# pure guardrails against a future modifier rather than a live tuning surface.
 CLAMPS = {
     "WATER": (2, 45),
     "FERTILIZE": (7, 240),
@@ -78,12 +83,20 @@ CONDITION_DRIVEN = {"PRUNE", "REPOT"}
 
 
 def _watering_method(plant):
-    """Blank means manual: assume you water it, and err toward reminding."""
+    """Blank means manual: assume you water it, and err toward reminding.
+
+    Prefix-matched so a hand-typed "drip irrigation" or "sprinkler system"
+    resolves rather than silently falling through to manual."""
     raw = plant.get("watering")
     if raw is None:
         return MANUAL
     value = str(raw).strip().lower()
-    return value or MANUAL
+    if not value:
+        return MANUAL
+    for known in (SPRINKLER, DRIP, ESTABLISHED, MANUAL):
+        if value.startswith(known):
+            return known
+    return MANUAL
 
 
 def _is_outdoor(plant):
@@ -171,6 +184,17 @@ def _water_interval(plant, care, climate, method):
         days *= 1.4
         adjustments.append(("dormant", int(round(days - before))))
 
+    # The plant's own documented minimum outranks any weather modifier. ET0 and
+    # dry air compound to roughly -46% in an LA summer, which would otherwise
+    # push near-succulents below the floor their care guidelines set, and
+    # overwatering is their actual failure mode. Capped at `base` so a cache
+    # entry with min > max cannot stretch the interval instead.
+    minimum = care.get("min_watering_days")
+    if minimum and days < minimum:
+        before = days
+        days = min(minimum, float(base))
+        adjustments.append(("plant minimum", int(round(days - before))))
+
     return base, days, adjustments
 
 
@@ -195,7 +219,20 @@ def _fertilize_interval(plant, climate):
 
 
 def _mist_interval(climate):
-    return BASE_INTERVALS["MIST"], float(BASE_INTERVALS["MIST"]), []
+    """Three bands: worth doing in dry air, occasional in between, and
+    suppressed entirely above HUMID_AIR_RH (handled by the caller). Without the
+    middle band every non-irrigated plant carries a standing 2-day entry."""
+    base = BASE_INTERVALS["MIST"]
+    days = float(base)
+    adjustments = []
+
+    humidity = climate.get("humidity_mean")
+    if humidity is not None and humidity >= DRY_AIR_RH:
+        before = days
+        days *= MIST_MIDDLING_MULTIPLIER
+        adjustments.append(("moderate humidity", int(round(days - before))))
+
+    return base, days, adjustments
 
 
 def _simple_interval(action, plant, climate, method):
@@ -279,7 +316,9 @@ def explain_interval(action, plant, care, climate, days_since=None):
 
     final = _clamp(action, int(round(days)))
 
-    # Clamping can erase a small adjustment entirely; don't claim one happened.
+    # Don't credit a modifier that rounded away to nothing, and don't claim any
+    # adjustment at all when clamping landed us back on the base.
+    adjustments = [(label, delta) for label, delta in adjustments if delta]
     if final == base:
         adjustments = []
 
