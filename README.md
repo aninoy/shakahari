@@ -9,8 +9,10 @@ Unlike simple timer apps, Shakahari uses **Gemini 2.5 Flash** (AI), **Open-Meteo
 - **🧠 Context-Aware Agent:** Analyzes recent rain history, temperature forecasts, and specific plant hardiness to decide if care is _actually_ needed.
 - **📖 Plant-Specific Guidelines:** Uses [Perenual API](https://perenual.com) to fetch watering frequency for 10,000+ plant species.
 - **📅 Days Tracking:** Calculates days since each action type (WATER, MIST, ROTATE, etc.) from CareHistory.
-- **🛡️ Safety Filters:** Won't recommend watering if < 3 days since last watering, rotating if < 7 days, etc.
-- **🌦️ Weather Integrated:** Automatically skips watering outdoor plants if it rained.
+- **🌡️ Computed Intervals:** Every plant gets its own schedule per action, derived from evapotranspiration, rain (past *and* forecast), humidity, daylight-based season, and how it is watered — not a fixed table. The digest shows its work (`🔁10d→8d (high ET₀)`).
+- **🧪 Per-Product Feeding:** Fertilizing is grouped by bottle, so one "done" tap means one real-world act with one product.
+- **🌦️ Weather Integrated:** Skips watering outdoor plants when it has rained or is about to, and ignores rain entirely for indoor ones.
+- **🚿 Irrigation Aware:** Plants on a sprinkler or drip line never generate watering reminders you cannot act on.
 - **💬 Instant Feedback:** Receive daily digest via **Telegram**. Tap buttons to log actions instantly, or send `/log` anytime to log actions not on the digest.
 - **📂 Serverless:** Runs on a scheduled GitHub Action (Cron). No AWS/GCP bills.
 
@@ -53,12 +55,24 @@ You will need free accounts for the following services:
 2. Rename the first tab to `Plants`.
 3. Add the following headers:
 
-   | Name | Environment | Light | Humidity | Notes | Last Watered | Last Fertilized | Status |
-   |------|-------------|-------|----------|-------|--------------|-----------------|--------|
+   | Name | Environment | Light | Humidity | Notes | Last Watered | Last Fertilized | Status | Fertilizer | Watering |
+   |------|-------------|-------|----------|-------|--------------|-----------------|--------|------------|----------|
 
    - **Environment**: `indoor`, `outdoor`, `balcony`, or `greenhouse`
    - **Light**: `direct`, `indirect`, `low`, or `shade`
    - **Humidity**: `low`, `medium`, or `high`
+   - **Fertilizer**: which product this plant gets — `CITRUS`, `ACID`, `BLOOM`,
+     `GRANULAR`, `ALLPURPOSE`, `ALLPURPOSE_HALF`, or `SUCCULENT`
+     (see `src/fertilizers.py`). Blank lands the plant in a visible
+     "❓ Not set" group rather than defaulting to a product — feeding the wrong
+     fertilizer is worse than not feeding.
+   - **Watering**: how it gets watered — `manual` (default when blank),
+     `sprinkler`, `drip`, or `established`. Irrigated plants produce no
+     watering or misting tasks; in-ground ones produce no rotate, repot or
+     move tasks.
+
+   Run `python scripts/dry_run.py --table` to print paste-ready values for
+   both new columns.
 
 4. **CareHistory Tab** (auto-created on first run):
 
@@ -197,21 +211,80 @@ covers a personal bot's traffic.
 
 ### The Daily Notification
 
-Every morning, if action is required, Shakahari sends you a compact digest —
-one line per task showing how overdue it is and how often that care is
-normally needed, instead of a full sentence, so a large backlog stays
-scannable:
+Care happens by action, not by plant — you pick up the watering can once and
+work through everything that needs it. The digest is shaped to match, grouped
+by action with the most overdue group first, so one action can be completed in
+a single pass:
 
-> 🌿 **Plant Care Tasks (2026-01-22)**  
->_All plants generally healthy._
+> 🌿 **Plant Care Tasks (2026-09-19)**  
+> _Warm and dry — watering is running ahead of schedule._
 >
-> 🔴💧 **Monstera** — 12d overdue · 🔁10d  
-> 🟡💧 **Peace Lily** — 4d overdue · 🔁14d  
-> 🟢🔄 **Pothos** — 2d overdue · 🔁7d  
+> 💧 **WATER** · 3 plants  
+> 🔴 **Monstera** — 12d · 🔁10d→8d (high ET₀)  
+> 🟡 **Peace Lily** — 15d · 🔁14d  
+> 🟢 **Black Pagoda** — 11d · 🔁10d→8d (high ET₀)
+>
+> 🧪 **FERTILIZE** · 4 plants  
+> &nbsp;&nbsp;🍊 **Espoma Citrus-tone**  
+> 🔴 **Avocado** — never · 🔁120d  
+> &nbsp;&nbsp;🌸 **Miracle-Gro Bloom Booster**  
+> 🔴 **Bougainvillea** — 24d · 🔁10d  
+> 🟡 **Geranium** — 12d · 🔁10d  
+> &nbsp;&nbsp;❓ **Not set**  
+> 🟢 **Mint** — never · 🔁14d
 
-Each line has its own named button underneath (e.g. "💧 Water Monstera"),
-plus a "Mark watering complete" / "Mark rotating complete" style button per
-action type actually present, and a final "Mark everything above done".
+Each line shows how long it has been (`12d`, or `never`) and the interval that
+applies (`🔁10d`). When weather or season moved that interval, the line shows
+the change and why: `🔁10d→8d (high ET₀)`.
+
+**Fertilizing is subdivided by product.** Plants using the same bottle are
+grouped together — one trip to one shelf — with the dilution annotated per
+plant where it differs (`½ strength`). A plant with no `Fertilizer` value
+lands in a visible **❓ Not set** group, always sorted last so a
+misconfiguration never buries real work.
+
+### How recommendations are decided
+
+Intervals are computed per plant, per action, then the *same numbers* are given
+to Gemini and enforced afterwards — so the model and the safety net cannot
+disagree. (Previously the prompt got prose weather while the filter applied
+fixed constants, silently overriding whatever the model concluded.)
+
+What moves an interval:
+
+| Signal | Effect |
+|--------|--------|
+| **Evapotranspiration (ET₀)** | The core watering driver — it already folds in heat, humidity, sun and wind. Scales the interval inversely, clamped to ±40%. Damped for `established` plantings, whose deep roots buffer a hot week in a way a pot cannot. |
+| **Rain, past and forecast** | Recent rain defers outdoor watering; *incoming* rain defers it too, and defers outdoor feeding (it would wash off before uptake). Indoor plants ignore rain entirely. |
+| **Humidity** | Above 60% RH misting is dropped altogether rather than merely stretched — it achieves nothing. Very dry air shortens watering slightly. |
+| **Season** | Taken from `daylight_duration`, not a hardcoded month table, so it stays correct anywhere. Feeding is **suppressed entirely in dormancy** (≈ Nov–Feb in LA) and stretched in shoulder season. |
+| **Fertilizer product** | Each product carries its own cadence: bloom booster every 10d, acid feed every 35d, succulents every 120d. |
+| **Irrigation** | `sprinkler`/`drip` suppress watering and misting; in-ground plantings suppress rotate, repot and move. |
+| **Heat spike** | `MOVE` is triggered by a forecast above 35°C on an outdoor pot, rather than being a recurring chore. |
+
+Two rules keep the digest from filling with things you would never act on:
+
+- **`PRUNE` and `REPOT` are condition-driven.** "Never repotted" is the normal
+  state of a plant, not a backlog, so they are never proposed merely because no
+  log entry exists. Spacing is still enforced once they *have* been done.
+- **`CHECK` is a fallback, not an extra.** If you are already at the plant to
+  water or feed it, you are looking at it — so `CHECK` only earns a line for
+  plants nothing else brings you to.
+
+Whatever the modifiers do, every interval is clamped to a per-action floor and
+ceiling (watering can never be recommended more often than every 2 days).
+
+### Previewing without sending
+
+```bash
+python scripts/dry_run.py            # build today's digest, print it, send nothing
+python scripts/dry_run.py --live     # use the sheet exactly as it is
+python scripts/dry_run.py --table    # paste-ready Fertilizer / Watering values
+```
+
+Prints the derived climate, every plant's computed intervals (with `✗` for
+actions that do not apply), the rendered message and the keyboard. Nothing
+reaches the Sheet or Telegram.
 
 ### Interacting with the Bot
 
@@ -221,9 +294,13 @@ Every task in the daily digest has its own named button:
   the button changes to show exactly what was logged and when (e.g.
   "✓ Water Monstera — 2026-08-20"), and a toast confirms it. Nothing new is
   added to the chat, so you never lose your scroll position.
-- **Tap "Mark watering complete"** (or fertilizing / rotating / etc. — one
-  button per action type actually in today's digest) to confirm every plant
-  currently needing that action in one tap.
+- **Tap "Mark watering complete"** (or rotating / etc. — one button per action
+  type actually in today's digest) to confirm every plant currently needing
+  that action in one tap.
+- **For fertilizing, there is one button per product** ("🍊 Mark Espoma
+  Citrus-tone done"), never a single button for the action. A bulk tap has to
+  mean one real-world act with one bottle — a combined button would claim the
+  azalea's acid feed and the bougainvillea's bloom booster at the same time.
 - **Tap "✅ Mark everything above done"** to confirm every pending task at once.
 - Not doing something today? Just don't tap its button — there's no
   separate "skip" action; the agent reconsiders anything still pending
@@ -243,14 +320,21 @@ independently of whatever the agent last recommended.
 ├── .github/workflows/   # Cron schedule configuration
 ├── src/
 │   ├── actions.py       # Shared action constants (icons, gerunds, care types)
-│   ├── agent.py         # Gemini AI Logic (Prompt Engineering)
+│   ├── agent.py         # Gemini prompt + the filter that enforces the intervals
 │   ├── callbacks.py     # Telegram callback_data encode/decode
 │   ├── config.py        # Configuration & Env Vars
+│   ├── digest.py        # Grouping and rendering of the daily message
+│   ├── fertilizers.py   # Fertilizer product registry + sheet-value normalization
+│   ├── intervals.py     # Context-aware care intervals (pure, no I/O)
 │   ├── plant_api.py     # Perenual API + Gemini-grounded care lookups
 │   ├── storage.py       # Google Sheets DB & Care Logging
 │   ├── telegram_bot.py  # Notification Service
 │   ├── recorder.py      # Cloud Function for Real-Time Logging
-│   └── weather.py       # Open-Meteo Integration
+│   └── weather.py       # Open-Meteo fetch + derived climate signals
+├── scripts/
+│   └── dry_run.py       # Preview the digest (and the sheet table) without sending
+├── data/
+│   └── fertilizer.md    # Source notes behind the product assignments
 ├── tests/               # pytest suite
 ├── main.py              # Entry point (Advisor cron job)
 └── requirements.txt     # Python dependencies
