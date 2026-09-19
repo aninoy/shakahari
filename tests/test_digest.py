@@ -274,3 +274,51 @@ def test_buttons_follow_the_same_group_order_as_the_message():
 def test_an_empty_task_list_yields_just_the_mark_everything_row():
     kb = build_keyboard([])
     assert len(kb["inline_keyboard"]) == 1
+
+
+# --- urgency ordering, refined --------------------------------------------
+
+def test_priority_outranks_raw_overdue_ratio_between_groups():
+    """A never-rotated plant is not more urgent than a plant 3x past due for
+    water. 'Never' is a cold-start artifact, not urgency."""
+    text = format_digest([
+        task("Pothos", "ROTATE", days_since=None, threshold=7, priority="MEDIUM"),
+        task("Monstera", "WATER", days_since=30, threshold=10, priority="HIGH"),
+    ], "")
+
+    assert _index_of(text, "WATER") < _index_of(text, "ROTATE")
+
+
+def test_never_done_does_not_dominate_a_far_more_overdue_task():
+    text = format_digest([
+        task("Pothos", "ROTATE", days_since=None, threshold=7),
+        task("Monstera", "WATER", days_since=300, threshold=10),
+    ], "")
+
+    assert _index_of(text, "WATER") < _index_of(text, "ROTATE")
+
+
+def test_never_still_outranks_a_barely_overdue_task():
+    text = format_digest([
+        task("Barely", "WATER", days_since=11, threshold=10),
+        task("Never", "WATER", days_since=None, threshold=10),
+    ], "")
+
+    assert _index_of(text, "Never") < _index_of(text, "Barely")
+
+
+def test_priority_orders_plants_within_a_group_too():
+    text = format_digest([
+        task("Low", "WATER", days_since=20, threshold=10, priority="LOW"),
+        task("High", "WATER", days_since=11, threshold=10, priority="HIGH"),
+    ], "")
+
+    assert _index_of(text, "High") < _index_of(text, "Low")
+
+
+def test_an_unrecognized_priority_does_not_crash_the_ordering():
+    text = format_digest([
+        task("A", "WATER", priority="URGENT!!"),
+        task("B", "WATER", priority=""),
+    ], "")
+    assert "A" in text and "B" in text

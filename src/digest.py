@@ -24,9 +24,16 @@ PRIORITY_MARKERS = {
 
 NOT_SET_HEADING = "❓ Not set"
 
-# Groups sort ascending on negated overdue ratio, so +inf lands last: an
-# unassigned plant stays visible but never outranks work that can be done.
+# Groups sort ascending on a negated rank, so +inf lands last: an unassigned
+# plant stays visible but never outranks work that can be done.
 _LAST = float("inf")
+
+PRIORITY_WEIGHTS = {'HIGH': 3, 'MEDIUM': 2, 'LOW': 1}
+
+# A never-performed action is unknown, not infinitely overdue. Capping it keeps
+# a cold-start "never rotated" from outranking a plant three times past due for
+# water, while still sorting it above something barely due.
+NEVER_RATIO = 2.0
 
 
 def _overdue_ratio(task):
@@ -36,9 +43,18 @@ def _overdue_ratio(task):
     outranking a 30-day-overdue feeding."""
     days = task.get('days_since')
     if days is None:
-        return float("inf")          # never done ranks as maximally overdue
+        return NEVER_RATIO
     threshold = task.get('threshold') or 1
     return days / threshold
+
+
+def _urgency(task):
+    """Sort key: the model's priority first, then how far past due.
+
+    Priority leads because it is the only signal that knows a wilting plant
+    matters more than an unrotated one, whatever the arithmetic says."""
+    weight = PRIORITY_WEIGHTS.get((task.get('priority') or '').upper(), 0)
+    return (weight, _overdue_ratio(task))
 
 
 def _action_of(task):
@@ -57,11 +73,12 @@ def _group_tasks(tasks):
 
     def order(item):
         action, members = item
+        best = max(_urgency(t) for t in members)
         tie = CARE_ACTIONS.index(action) if action in CARE_ACTIONS else len(CARE_ACTIONS)
-        return (-max(_overdue_ratio(t) for t in members), tie)
+        return (-best[0], -best[1], tie)
 
     ordered = sorted(groups.items(), key=order)
-    return [(action, sorted(members, key=_overdue_ratio, reverse=True))
+    return [(action, sorted(members, key=_urgency, reverse=True))
             for action, members in ordered]
 
 
@@ -81,10 +98,11 @@ def _subgroup_fertilizer(members):
     def order(item):
         label, bucket = item
         if label == NOT_SET_HEADING:
-            return (_LAST, label)
-        return (-max(_overdue_ratio(t) for t in bucket["tasks"]), label)
+            return (_LAST, _LAST, label)
+        best = max(_urgency(t) for t in bucket["tasks"])
+        return (-best[0], -best[1], label)
 
-    return [(label, bucket["icon"], sorted(bucket["tasks"], key=_overdue_ratio, reverse=True))
+    return [(label, bucket["icon"], sorted(bucket["tasks"], key=_urgency, reverse=True))
             for label, bucket in sorted(buckets.items(), key=order)]
 
 
