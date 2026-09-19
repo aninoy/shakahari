@@ -30,6 +30,7 @@ class FakePlantDB:
         self.log_calls = []
         self.donetype_calls = []
         self.alldone_calls = []
+        self.fertilizer_calls = []
         FakePlantDB.instances.append(self)
 
     def log_task_action(self, plant_name, action, date=None):
@@ -43,6 +44,10 @@ class FakePlantDB:
     def mark_all_done(self, date=None):
         self.alldone_calls.append(date)
         return 2
+
+    def mark_fertilizer_done(self, code, date=None):
+        self.fertilizer_calls.append((code, date))
+        return ["Avocado", "Orange"] if code == "CITRUS" else []
 
 
 @pytest.fixture(autouse=True)
@@ -440,3 +445,102 @@ def test_logback_shows_plant_picker_again(monkeypatch):
 
     assert edits[0][0] == "Which plant?"
     assert edits[0][1]["inline_keyboard"] == [[{"text": "Fern", "callback_data": "logsel:Fern"}]]
+
+# --- per-product fertilizer bulk taps --------------------------------------
+
+def _fert_markup(today):
+    return {"inline_keyboard": [
+        [{"text": "🧪 Fertilize Avocado", "callback_data": "t:FERTILIZE:Avocado"}],
+        [{"text": "🧪 Fertilize Orange", "callback_data": "t:FERTILIZE:Orange"}],
+        [{"text": "🧪 Fertilize Bougainvillea", "callback_data": "t:FERTILIZE:Bougainvillea"}],
+        [{"text": "🍊 Mark Espoma Citrus-tone done", "callback_data": f"donefert:CITRUS:{today}"}],
+        [{"text": "🌸 Mark Bloom Booster done", "callback_data": f"donefert:BLOOM:{today}"}],
+        [{"text": "✅ Mark everything above done", "callback_data": f"alldone:{today}"}],
+    ]}
+
+
+def test_donefert_collapses_only_the_rows_for_that_product(monkeypatch):
+    """Marking the citrus feed done must leave the bougainvillea's bloom booster
+    row alone -- that cross-product claim is the bug being fixed."""
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+    edits = []
+    monkeypatch.setattr(
+        recorder, "edit_message_reply_markup",
+        lambda chat_id, message_id, reply_markup: edits.append(reply_markup),
+    )
+    monkeypatch.setattr(recorder, "answer_callback_query", lambda *a, **k: None)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    markup = _fert_markup(today)
+    request = FakeRequest(_callback_update(f"donefert:CITRUS:{today}", markup=markup), secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    rows = edits[-1]["inline_keyboard"]
+    assert rows[0] == [{"text": f"✓ Fertilize Avocado — {today}", "callback_data": "noop"}]
+    assert rows[1] == [{"text": f"✓ Fertilize Orange — {today}", "callback_data": "noop"}]
+    assert rows[2] == markup["inline_keyboard"][2], "Bougainvillea row was touched"
+    assert rows[3][0]["callback_data"] == "noop"
+    assert "Citrus-tone" in rows[3][0]["text"]
+    assert rows[4] == markup["inline_keyboard"][4], "Bloom Booster button was touched"
+    assert rows[5] == markup["inline_keyboard"][5]
+
+
+def test_donefert_marks_only_that_product_in_the_sheet(monkeypatch):
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+    monkeypatch.setattr(recorder, "edit_message_reply_markup", lambda *a, **k: None)
+    monkeypatch.setattr(recorder, "answer_callback_query", lambda *a, **k: None)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    request = FakeRequest(
+        _callback_update(f"donefert:CITRUS:{today}", markup=_fert_markup(today)), secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    assert FakePlantDB.instances[-1].fertilizer_calls == [("CITRUS", today)]
+
+
+def test_donefert_from_a_previous_days_digest_is_refused(monkeypatch):
+    """Same staleness rule as alldone/donetype: yesterday's digest must not
+    write today's date over whatever happens to be pending now."""
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+    edits = []
+    monkeypatch.setattr(recorder, "edit_message_reply_markup", lambda *a, **k: edits.append((a, k)))
+    answers = []
+    monkeypatch.setattr(
+        recorder, "answer_callback_query",
+        lambda cid, text="", show_alert=False: answers.append((cid, text, show_alert)),
+    )
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    request = FakeRequest(
+        _callback_update("donefert:CITRUS:2020-01-01", markup=_fert_markup(today)), secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    assert FakePlantDB.instances == []
+    assert edits == []
+    assert "previous day" in answers[-1][1]
+    assert answers[-1][2] is True
+
+
+def test_donefert_with_no_matching_plants_still_acknowledges(monkeypatch):
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+    monkeypatch.setattr(recorder, "edit_message_reply_markup", lambda *a, **k: None)
+    answers = []
+    monkeypatch.setattr(
+        recorder, "answer_callback_query",
+        lambda cid, text="", show_alert=False: answers.append((cid, text, show_alert)),
+    )
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    request = FakeRequest(
+        _callback_update(f"donefert:ACID:{today}", markup=_fert_markup(today)), secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    assert answers, "the button must always be acknowledged"

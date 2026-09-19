@@ -4,6 +4,7 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from src.config import SHEET_CREDENTIALS, SHEET_NAME, WORKSHEET_NAME
+from src.fertilizers import normalize, product_of
 
 HISTORY_WORKSHEET = "CareHistory"
 HISTORY_HEADERS = ["Date", "Plant", "Action", "Notes"]
@@ -133,6 +134,38 @@ class PlantDB:
         if updated:
             self.save()
         return updated
+
+    def mark_fertilizer_done(self, code, date=None):
+        """Confirm one fertilizer product across every plant pending a feed.
+
+        Returns the plant names marked -- not a count, unlike mark_action_done --
+        so the recorder can collapse exactly those keyboard rows rather than
+        every FERTILIZE row on the message."""
+        if not date:
+            date = datetime.now().strftime('%Y-%m-%d')
+
+        if 'Fertilizer' not in self.df.columns:
+            return []
+
+        product = product_of(code) or code
+        marked = []
+
+        mask_pending = self.df['Status'].str.contains(
+            'PENDING_FERTILIZE', na=False, regex=False)
+        for idx, row in self.df[mask_pending].iterrows():
+            if normalize(row.get('Fertilizer')) != code:
+                continue
+
+            plant_name = row['Name']
+            self.df.at[idx, 'Last Fertilized'] = date
+            self.log_action(plant_name, 'FERTILIZE', date=date,
+                            notes=f'Confirmed via {product}')
+            self._clear_pending(idx, 'FERTILIZE')
+            marked.append(plant_name)
+
+        if marked:
+            self.save()
+        return marked
 
     def _clear_pending(self, idx, action):
         """Remove one action from a row's composite PENDING_ status string."""

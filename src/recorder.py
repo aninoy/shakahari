@@ -4,11 +4,13 @@ from src.actions import CARE_ACTIONS, ACTION_ICONS
 from src.callbacks import (
     decode_callback,
     encode_task_button,
+    encode_fert_done,
     encode_log_select,
     encode_log_action,
     encode_log_back,
 )
 from src.config import TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET
+from src.fertilizers import product_of
 from src.storage import PlantDB
 from src.telegram_bot import answer_callback_query, edit_message_reply_markup, edit_message_text, send_message
 
@@ -74,6 +76,8 @@ def _handle_callback(callback_query):
         _handle_alldone(callback_id, chat_id, message_id, parsed)
     elif kind == "donetype":
         _handle_donetype(callback_id, chat_id, message_id, message, parsed)
+    elif kind == "donefert":
+        _handle_donefert(callback_id, chat_id, message_id, message, parsed)
     elif kind == "logsel":
         _handle_logsel(callback_id, chat_id, message_id, parsed)
     elif kind == "logact":
@@ -137,6 +141,52 @@ def _handle_donetype(callback_id, chat_id, message_id, message, parsed):
     new_markup = _replace_action_rows(message["reply_markup"], parsed["action"], parsed["date"], count)
     edit_message_reply_markup(chat_id, message_id, new_markup)
     answer_callback_query(callback_id, text=f"✅ Marked {count} plant(s) done")
+
+
+def _handle_donefert(callback_id, chat_id, message_id, message, parsed):
+    """Confirm one fertilizer product. Same staleness rule as donetype: the
+    Sheet is only opened once today's date is confirmed."""
+    if parsed["date"] != datetime.now().strftime('%Y-%m-%d'):
+        answer_callback_query(
+            callback_id,
+            text="This digest is from a previous day — reply isn't supported anymore, check today's message instead.",
+            show_alert=True,
+        )
+        return
+
+    db = PlantDB()
+    marked = db.mark_fertilizer_done(parsed["code"], date=parsed["date"])
+
+    product = product_of(parsed["code"]) or parsed["code"]
+    new_markup = _replace_fert_rows(
+        message["reply_markup"], parsed["code"], product, marked, parsed["date"])
+    edit_message_reply_markup(chat_id, message_id, new_markup)
+    answer_callback_query(callback_id, text=f"✅ Marked {len(marked)} plant(s) fed with {product}")
+
+
+def _replace_fert_rows(current_markup, code, product, plant_names, date):
+    """Collapses the rows for exactly the plants that were marked.
+
+    Unlike _replace_action_rows this matches an explicit name list rather than
+    a callback prefix: FERTILIZE rows for other products share the t:FERTILIZE:
+    prefix and must survive untouched."""
+    done_payloads = {encode_task_button("FERTILIZE", name) for name in plant_names}
+    bulk_payload = encode_fert_done(code, date)
+    updated_rows = []
+    for row in current_markup.get("inline_keyboard", []):
+        row_data = [btn.get("callback_data") or "" for btn in row]
+        task_match = next((cd for cd in row_data if cd in done_payloads), None)
+        if task_match:
+            plant_name = task_match[len("t:FERTILIZE:"):]
+            updated_rows.append([{"text": f"✓ Fertilize {plant_name} — {date}", "callback_data": "noop"}])
+        elif bulk_payload in row_data:
+            updated_rows.append([{
+                "text": f"✓ {product} marked done ({len(plant_names)}) — {date}",
+                "callback_data": "noop",
+            }])
+        else:
+            updated_rows.append(row)
+    return {"inline_keyboard": updated_rows}
 
 
 def _replace_task_row(current_markup, action, plant_name, new_row):
