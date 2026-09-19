@@ -28,6 +28,10 @@ due actions actually matter today, not for overriding the schedule.
 BE CONSERVATIVE. An action absent from due_in_days does not apply to that plant
 at all and must never be recommended."""
 
+# Actions whose last occurrence is tracked in CareHistory rather than in a
+# dedicated sheet column.
+HISTORY_ACTIONS = ['MIST', 'ROTATE', 'MOVE', 'PRUNE', 'REPOT', 'CHECK']
+
 
 def days_since(date_str):
     """Days since a YYYY-MM-DD string, or None if absent or unparseable."""
@@ -40,67 +44,109 @@ def days_since(date_str):
         return None
 
 
+def _is_due(interval, days):
+    return days is None or days >= interval["days"]
+
+
+def _has_other_work_due(intervals, days_by_action):
+    return any(action != "CHECK" and _is_due(interval, days_by_action.get(action))
+               for action, interval in intervals.items())
+
+
+def build_plant_context(row, care_history, climate):
+    """One plant's context: history, care guidelines, and the intervals the
+    engine computed for it.
+
+    Module-level rather than a method so the dry-run harness exercises exactly
+    this path instead of a parallel reimplementation that could drift.
+    """
+    plant_name = row.get('Name', 'Unknown')
+
+    days_by_action = {
+        "WATER": days_since(row.get('Last Watered', '')),
+        "FERTILIZE": days_since(row.get('Last Fertilized', '')),
+    }
+    if care_history and plant_name in care_history:
+        for action in HISTORY_ACTIONS:
+            for record in care_history[plant_name]:
+                if record.get('Action') == action:
+                    days = days_since(record.get('Date', ''))
+                    if days is not None:
+                        days_by_action[action] = days
+                    break
+
+    care = get_care_guidelines(plant_name)
+
+    plant = {
+        "name": plant_name,
+        "environment": row.get('Environment', ''),
+        "watering": row.get('Watering'),
+        "fertilizer": normalize(row.get('Fertilizer')),
+        "notes": row.get('Notes', ''),
+    }
+
+    intervals = {}
+    for action in CARE_ACTIONS:
+        result = effective_interval(
+            action, plant, care, climate, days_since=days_by_action.get(action))
+        if result is not None:
+            intervals[action] = result
+
+    # CHECK is the fallback action, not an additional one: if you are already
+    # at the plant to water or feed it, you are looking at it. It earns a line
+    # only for plants nothing else brings you to.
+    if _has_other_work_due(intervals, days_by_action):
+        intervals.pop("CHECK", None)
+
+    plant["_care"] = care
+    plant["_intervals"] = intervals
+    plant["_days_since"] = days_by_action
+    return plant
+
+
+def prompt_view(plant):
+    """What Gemini sees: no private keys, and only actions that apply."""
+    view = {
+        "name": plant["name"],
+        "environment": plant["environment"],
+        "days_since_action": plant["_days_since"],
+        "due_in_days": {a: r["days"] for a, r in plant["_intervals"].items()},
+    }
+    if plant["fertilizer"]:
+        view["fertilizer"] = product_of(plant["fertilizer"])
+    if plant["watering"]:
+        view["watered_by"] = plant["watering"]
+    if plant["notes"]:
+        view["notes"] = plant["notes"]
+    return view
+
+
+def due_tasks(plant):
+    """Every action currently past its interval, in digest-task shape.
+
+    Used by the dry-run harness to show what the engine considers due before
+    Gemini prunes it."""
+    tasks = []
+    for action, interval in plant["_intervals"].items():
+        days = plant["_days_since"].get(action)
+        if not _is_due(interval, days):
+            continue
+        tasks.append({
+            "name": plant["name"],
+            "action": action,
+            "priority": "HIGH" if days is None else "MEDIUM",
+            "days_since": days,
+            "threshold": interval["days"],
+            "base": interval["base"],
+            "adjustments": interval["adjustments"],
+            "fertilizer": plant["fertilizer"],
+        })
+    return tasks
+
+
 class PlantAgent:
     def __init__(self):
         self.client = genai.Client(api_key=GEMINI_API_KEY)
-
-    def _build_plant(self, row, care_history, climate):
-        """One plant's context: history, care guidelines and the intervals the
-        engine computed for it. The same intervals go into the prompt and into
-        the post-filter, so the model and the safety net cannot disagree."""
-        plant_name = row.get('Name', 'Unknown')
-
-        days_by_action = {
-            "WATER": days_since(row.get('Last Watered', '')),
-            "FERTILIZE": days_since(row.get('Last Fertilized', '')),
-        }
-        if care_history and plant_name in care_history:
-            for action in ['MIST', 'ROTATE', 'MOVE', 'PRUNE', 'REPOT', 'CHECK']:
-                for record in care_history[plant_name]:
-                    if record.get('Action') == action:
-                        days = days_since(record.get('Date', ''))
-                        if days is not None:
-                            days_by_action[action] = days
-                        break
-
-        care = get_care_guidelines(plant_name)
-        fertilizer = normalize(row.get('Fertilizer'))
-
-        plant = {
-            "name": plant_name,
-            "environment": row.get('Environment', ''),
-            "watering": row.get('Watering'),
-            "fertilizer": fertilizer,
-            "notes": row.get('Notes', ''),
-        }
-
-        intervals = {}
-        for action in CARE_ACTIONS:
-            result = effective_interval(action, plant, care, climate)
-            if result is not None:
-                intervals[action] = result
-
-        plant["_care"] = care
-        plant["_intervals"] = intervals
-        plant["_days_since"] = days_by_action
-        return plant
-
-
-    def _prompt_view(self, plant):
-        """What Gemini sees: no private keys, and only actions that apply."""
-        view = {
-            "name": plant["name"],
-            "environment": plant["environment"],
-            "days_since_action": plant["_days_since"],
-            "due_in_days": {a: r["days"] for a, r in plant["_intervals"].items()},
-        }
-        if plant["fertilizer"]:
-            view["fertilizer"] = product_of(plant["fertilizer"])
-        if plant["watering"]:
-            view["watered_by"] = plant["watering"]
-        if plant["notes"]:
-            view["notes"] = plant["notes"]
-        return view
 
     def get_tasks(self, weather, inventory_df, care_history=None):
         """Returns (tasks, summary). Each task carries the days-since, the
@@ -109,11 +155,8 @@ class PlantAgent:
         print("🌱 Building plant context with care guidelines...")
 
         climate = derive_climate(weather)
-
-        inventory = []
-        for _, row in inventory_df.iterrows():
-            inventory.append(self._build_plant(row, care_history, climate))
-
+        inventory = [build_plant_context(row, care_history, climate)
+                     for _, row in inventory_df.iterrows()]
         by_name = {p["name"]: p for p in inventory}
 
         prompt = f"""Analyze this plant inventory and recommend care actions.
@@ -127,7 +170,7 @@ class PlantAgent:
 is worth doing again -- already adjusted for weather, season and how the plant
 is watered.
 
-{json.dumps([self._prompt_view(p) for p in inventory], indent=2)}
+{json.dumps([prompt_view(p) for p in inventory], indent=2)}
 
 ## Instructions
 1. Recommend an action only when its days_since_action has reached or passed
@@ -189,7 +232,7 @@ If no actions are needed, return {{"tasks": [], "summary": "All plants look heal
                 continue
 
             days = plant["_days_since"].get(action)
-            if days is not None and days < interval["days"]:
+            if not _is_due(interval, days):
                 print(f"   ⏭️ Filtered {action} for {plant['name']} "
                       f"({days}d, due at {interval['days']}d)")
                 continue

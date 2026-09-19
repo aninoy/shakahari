@@ -33,8 +33,7 @@ ET0_MULTIPLIER_RANGE = (0.6, 1.5)
 ESTABLISHED_DAMPING = 0.3
 
 DRY_AIR_RH = 35          # below this, indoor air pulls water out noticeably
-HUMID_AIR_RH = 60        # above this, misting achieves very little
-MIST_HUMID_MULTIPLIER = 4.0
+HUMID_AIR_RH = 60        # above this, misting achieves nothing at all
 
 RAIN_PAST_THRESHOLD_MM = 10.0    # a real soaking in the last three days
 RAIN_AHEAD_THRESHOLD_MM = 5.0    # enough incoming rain to wait for
@@ -70,6 +69,12 @@ CLAMPS = {
 
 # Actions that only make sense while the plant is actively growing.
 GROWING_SEASON_ONLY = {"PRUNE", "REPOT"}
+
+# Condition-driven actions: proposed because something is visibly wrong or the
+# weather demands it, never because no log entry exists. "Never repotted" is
+# the normal state of a plant, not a backlog -- treating absent history as
+# overdue would put every plant in the digest on day one.
+CONDITION_DRIVEN = {"PRUNE", "REPOT"}
 
 
 def _watering_method(plant):
@@ -190,17 +195,7 @@ def _fertilize_interval(plant, climate):
 
 
 def _mist_interval(climate):
-    base = BASE_INTERVALS["MIST"]
-    days = float(base)
-    adjustments = []
-
-    humidity = climate.get("humidity_mean")
-    if humidity is not None and humidity >= HUMID_AIR_RH:
-        before = days
-        days *= MIST_HUMID_MULTIPLIER
-        adjustments.append(("humid air", int(round(days - before))))
-
-    return base, days, adjustments
+    return BASE_INTERVALS["MIST"], float(BASE_INTERVALS["MIST"]), []
 
 
 def _simple_interval(action, plant, climate, method):
@@ -224,7 +219,7 @@ def _simple_interval(action, plant, climate, method):
     return base, days, adjustments
 
 
-def explain_interval(action, plant, care, climate):
+def explain_interval(action, plant, care, climate, days_since=None):
     """Full result for `action` on `plant`, including why it was suppressed.
 
     Callers that just want a schedule should use `effective_interval`; this one
@@ -241,6 +236,17 @@ def explain_interval(action, plant, care, climate):
         return None
 
     # --- suppression: the action is meaningless for this plant ---
+    if action in CONDITION_DRIVEN and days_since is None:
+        return _suppressed(action, "not yet warranted", BASE_INTERVALS.get(action))
+
+    if action == "MIST":
+        humidity = climate.get("humidity_mean")
+        if humidity is not None and humidity >= HUMID_AIR_RH:
+            # Stretching the interval would still put it in the digest; at this
+            # humidity misting does nothing, so it does not belong there at all.
+            return _suppressed(action, f"air already at {int(humidity)}% RH",
+                               BASE_INTERVALS["MIST"])
+
     if action in ("WATER", "MIST") and method in IRRIGATED:
         return _suppressed(action, f"on the {method}", _base_for(action, plant, care))
 
@@ -286,7 +292,7 @@ def explain_interval(action, plant, care, climate):
     }
 
 
-def effective_interval(action, plant, care, climate):
+def effective_interval(action, plant, care, climate, days_since=None):
     """Days that should pass before `action` is worth doing again for `plant`.
 
     Returns None when the action does not apply at all -- an irrigated plant
@@ -294,7 +300,7 @@ def effective_interval(action, plant, care, climate):
     in dormancy. Otherwise returns the computed days alongside the base it
     started from and the labelled adjustments that moved it, so the digest can
     render '🔁10d→8d (high ET₀)'."""
-    result = explain_interval(action, plant, care, climate)
+    result = explain_interval(action, plant, care, climate, days_since=days_since)
     if result is None or result.get("suppressed_reason"):
         return None
     return result

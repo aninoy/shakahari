@@ -192,3 +192,45 @@ def test_a_sheet_without_the_new_columns_still_runs():
 
     assert len(tasks) == 1
     assert tasks[0]["fertilizer"] is None
+
+
+# --- CHECK is the fallback action, not an extra one -----------------------
+
+def test_check_is_dropped_when_the_plant_already_has_real_work_due():
+    """If you are already at the plant watering it, you are checking it. CHECK
+    exists for plants you would otherwise not touch."""
+    agent = make_agent([
+        {"name": "Monstera", "action": "WATER", "priority": "HIGH", "reason": "dry"},
+        {"name": "Monstera", "action": "CHECK", "priority": "LOW", "reason": "routine"},
+    ])
+    df = pd.DataFrame([row("Monstera", **{"Last Watered": days_ago(40)})])
+
+    tasks, _ = agent.get_tasks(weather=None, inventory_df=df)
+
+    actions = [t["action"] for t in tasks]
+    assert "WATER" in actions
+    assert "CHECK" not in actions
+
+
+def test_check_survives_for_a_plant_with_nothing_else_due():
+    agent = make_agent([{"name": "Azalea", "action": "CHECK", "priority": "LOW", "reason": "routine"}])
+    df = pd.DataFrame([row("Azalea", Environment="outdoor", Watering="sprinkler",
+                           **{"Last Fertilized": days_ago(1)})])
+
+    tasks, _ = agent.get_tasks(weather=None, inventory_df=df)
+
+    assert [t["action"] for t in tasks] == ["CHECK"]
+
+
+def test_check_is_not_offered_to_the_model_when_other_work_is_due():
+    agent = make_agent([])
+    df = pd.DataFrame([row("Monstera", **{"Last Watered": days_ago(40)})])
+
+    agent.get_tasks(weather=None, inventory_df=df)
+
+    prompt = prompt_of(agent)
+    body = prompt[prompt.index("is watered."):prompt.index("## Instructions")]
+    block = json.loads(body[body.index("["):body.rindex("]") + 1])
+
+    assert "CHECK" not in block[0]["due_in_days"]
+    assert "WATER" in block[0]["due_in_days"]

@@ -205,11 +205,10 @@ def test_unknown_season_does_not_suppress_anything():
 
 # --- humidity -------------------------------------------------------------
 
-def test_misting_is_near_pointless_in_humid_air():
+def test_misting_is_dropped_entirely_in_humid_air():
     """LA is currently 67-80% RH; MIST: 2 was firing year-round regardless."""
-    humid = climate(humidity_mean=75)
-    dry = climate(humidity_mean=30)
-    assert days("MIST", None, humid) > days("MIST", None, dry) * 3
+    assert effective_interval("MIST", plant(), CARE, climate(humidity_mean=75)) is None
+    assert effective_interval("MIST", plant(), CARE, climate(humidity_mean=30)) is not None
 
 
 def test_misting_stays_frequent_in_a_dry_santa_ana():
@@ -301,3 +300,49 @@ def test_checking_an_established_tree_stays_within_the_clamp():
     tree = plant(environment="outdoor", watering=ESTABLISHED)
     low, high = CLAMPS["CHECK"]
     assert low <= days("CHECK", tree) <= high
+
+
+# --- condition-driven actions ---------------------------------------------
+
+@pytest.mark.parametrize("action", ["PRUNE", "REPOT"])
+def test_occasional_actions_are_never_proposed_from_absent_history(action):
+    """'Never repotted' is the normal state of a plant, not a backlog. These
+    actions need positive evidence -- a heat spike, a note, the model spotting
+    something -- not merely the absence of a log entry."""
+    potted = plant(environment="indoor", watering=MANUAL)
+    assert effective_interval(action, potted, CARE, climate(), days_since=None) is None
+
+
+@pytest.mark.parametrize("action", ["WATER", "FERTILIZE", "ROTATE"])
+def test_scheduled_actions_are_still_due_when_never_done(action):
+    """A plant that has never been watered does need water."""
+    potted = plant(environment="indoor", watering=MANUAL)
+    assert effective_interval(action, potted, CARE, climate(), days_since=None) is not None
+
+
+def test_pruning_is_scheduled_once_it_has_actually_been_done():
+    """Spacing is still enforced -- it just isn't bootstrapped from nothing."""
+    potted = plant(environment="indoor", watering=MANUAL)
+    result = effective_interval("PRUNE", potted, CARE, climate(), days_since=90)
+    assert result is not None and result["days"] == 30
+
+
+def test_days_since_is_optional_so_existing_callers_keep_working():
+    assert effective_interval("WATER", plant(), CARE, climate()) is not None
+
+
+# --- misting in humid air --------------------------------------------------
+
+def test_misting_is_suppressed_outright_in_humid_air():
+    """72% RH in LA right now -- misting achieves nothing, so it should not be
+    offered at a stretched interval; it should not be offered at all."""
+    assert effective_interval("MIST", plant(), CARE, climate(humidity_mean=75)) is None
+
+
+def test_misting_still_applies_in_genuinely_dry_air():
+    result = effective_interval("MIST", plant(), CARE, climate(humidity_mean=25))
+    assert result is not None and result["days"] <= 3
+
+
+def test_unknown_humidity_leaves_misting_available():
+    assert effective_interval("MIST", plant(), CARE, climate(humidity_mean=None)) is not None

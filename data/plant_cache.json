@@ -184,5 +184,64 @@
     ],
     "common_name": "Black Pagoda Lipstick Plant",
     "_source": "Gemini AI (Grounded)"
+  },
+  "avocado": {
+    "watering": "Average",
+    "watering_period": "Weekly or every 7-10 days, adjusting for climate and maturity",
+    "min_watering_days": 7,
+    "max_watering_days": 10,
+    "sunlight": [
+      "Full sun",
+      "Part shade"
+    ],
+    "common_name": "Avocado",
+    "_source": "Gemini AI (Grounded)"
+  },
+  "loquat": {
+    "watering": "Minimum",
+    "watering_period": "\"7-10\"",
+    "min_watering_days": 14,
+    "max_watering_days": 21,
+    "sunlight": [
+      "full sun",
+      "part sun/part shade"
+    ],
+    "common_name": "Loquat",
+    "_source": "Perenual API"
+  },
+  "pomegranate": {
+    "watering": "Average",
+    "watering_period": "\"7-10\"",
+    "min_watering_days": 5,
+    "max_watering_days": 10,
+    "sunlight": [
+      "full sun"
+    ],
+    "common_name": "yarrow",
+    "_source": "Perenual API"
+  },
+  "fig": {
+    "watering": "Average",
+    "watering_period": "\"7-10\"",
+    "min_watering_days": 5,
+    "max_watering_days": 10,
+    "sunlight": [
+      "full sun",
+      "part shade"
+    ],
+    "common_name": "Japanese Persimmon",
+    "_source": "Perenual API"
+  },
+  "orange": {
+    "watering": "Average",
+    "watering_period": "\"5-7\"",
+    "min_watering_days": 5,
+    "max_watering_days": 10,
+    "sunlight": [
+      "full sun",
+      "part shade"
+    ],
+    "common_name": "Orange Dream Japanese Maple",
+    "_source": "Perenual API"
   }
 }
