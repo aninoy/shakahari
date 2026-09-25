@@ -1,13 +1,37 @@
-from src.config import MODEL_ID
-from src.storage import PlantDB
-from src.weather import get_forecast
-from src.agent import PlantAgent
-from src.telegram_bot import send_message
-from src.digest import format_digest, build_keyboard
-from src.recorder import telegram_webhook  # noqa: F401 -- Cloud Function entry point, unused by the Advisor
+"""Shakahari entry points.
+
+This module is loaded by TWO different runtimes:
+
+  * the daily GitHub Actions "Advisor" cron, which calls main()
+  * the Google Cloud Function "Recorder", whose entry point is
+    telegram_webhook (functions-framework resolves it from here)
+
+The Recorder runs in a small container and needs none of the Advisor's
+machinery. Importing the Advisor stack -- the Gemini SDK above all -- at module
+level cost ~36MB on every webhook request and pushed the container past its
+memory limit, so it was OOM-killed mid-request and no Sheet write ever landed.
+The Advisor's imports are therefore deferred into _advisor(), which only the
+cron path calls.
+"""
+from src.recorder import telegram_webhook  # noqa: F401 -- Cloud Function entry point
+
+
+def _advisor():
+    """Import the Advisor-only dependencies. Never reached by the Recorder."""
+    from src.config import MODEL_ID
+    from src.storage import PlantDB
+    from src.weather import get_forecast
+    from src.agent import PlantAgent
+    from src.telegram_bot import send_message
+    from src.digest import format_digest, build_keyboard
+    return (MODEL_ID, PlantDB, get_forecast, PlantAgent,
+            send_message, format_digest, build_keyboard)
 
 
 def main():
+    (MODEL_ID, PlantDB, get_forecast, PlantAgent,
+     send_message, format_digest, build_keyboard) = _advisor()
+
     print(f"🌿 Starting Plant Care Advisor ({MODEL_ID})...")
 
     # 1. Connect to the Sheet

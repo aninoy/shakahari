@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.storage import PlantDB
+from src.storage import PlantDB, HISTORY_HEADERS
 
 
 class FakeWorksheet:
@@ -287,3 +287,57 @@ def test_history_summary_keeps_the_latest_of_each_action_not_the_latest_n_rows()
     assert actions["WATER"] == "2026-09-18", "kept a stale WATER over the newest"
     assert actions["MIST"] == "2026-09-16"
     assert actions["ROTATE"] == "2026-09-14"
+
+
+# --- per-request cost -----------------------------------------------------
+
+class FakeHistoryWorksheet:
+    """Tracks which read API the header check uses."""
+    def __init__(self, first_row):
+        self._first_row = first_row
+        self.get_all_values_calls = 0
+        self.row_values_calls = 0
+        self.appended_rows = []
+
+    def get_all_values(self):
+        self.get_all_values_calls += 1
+        return [self._first_row] + [["x"] * 4 for _ in range(795)]
+
+    def row_values(self, n):
+        self.row_values_calls += 1
+        return self._first_row
+
+    def append_row(self, row):
+        self.appended_rows.append(row)
+
+
+def test_the_header_check_does_not_download_the_whole_care_history():
+    """PlantDB is constructed on every webhook request. Pulling 795 rows just
+    to ask 'does this sheet have headers' was part of what OOM-killed the
+    Cloud Function."""
+    from src.storage import ensure_history_headers
+
+    ws = FakeHistoryWorksheet(HISTORY_HEADERS)
+    ensure_history_headers(ws)
+
+    assert ws.get_all_values_calls == 0, "still downloading the entire sheet"
+    assert ws.row_values_calls == 1
+    assert ws.appended_rows == []
+
+
+def test_headers_are_added_when_the_history_sheet_is_empty():
+    from src.storage import ensure_history_headers
+
+    ws = FakeHistoryWorksheet([])
+    ensure_history_headers(ws)
+
+    assert ws.appended_rows == [HISTORY_HEADERS]
+
+
+def test_existing_headers_are_left_alone():
+    from src.storage import ensure_history_headers
+
+    ws = FakeHistoryWorksheet(HISTORY_HEADERS)
+    ensure_history_headers(ws)
+
+    assert ws.appended_rows == []

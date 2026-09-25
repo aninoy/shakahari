@@ -34,6 +34,22 @@ def _is_pending(status, action):
     return action in pending_actions(status)
 
 
+def ensure_history_headers(worksheet):
+    """Add the header row if the sheet is empty.
+
+    Reads only row 1. The previous get_all_values() pulled the entire care
+    history -- hundreds of rows -- on every webhook request just to answer
+    "is this empty", which was part of what exhausted the Cloud Function's
+    memory."""
+    try:
+        first_row = worksheet.row_values(1)
+    except Exception:
+        first_row = []
+    if not any(str(cell).strip() for cell in first_row):
+        print(f"📝 Adding headers to '{HISTORY_WORKSHEET}'...")
+        worksheet.append_row(HISTORY_HEADERS)
+
+
 class PlantDB:
     def __init__(self):
         try:
@@ -61,10 +77,7 @@ class PlantDB:
         # CareHistory worksheet (create if missing, add headers if empty)
         try:
             self.history_ws = self.spreadsheet.worksheet(HISTORY_WORKSHEET)
-            # Check if headers exist, add if empty
-            if not self.history_ws.get_all_values():
-                print(f"📝 Adding headers to '{HISTORY_WORKSHEET}'...")
-                self.history_ws.append_row(HISTORY_HEADERS)
+            ensure_history_headers(self.history_ws)
         except gspread.WorksheetNotFound:
             print(f"📝 Creating '{HISTORY_WORKSHEET}' worksheet...")
             self.history_ws = self.spreadsheet.add_worksheet(
