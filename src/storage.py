@@ -12,6 +12,11 @@ HISTORY_HEADERS = ["Date", "Plant", "Action", "Notes"]
 
 PENDING_PREFIX = "PENDING_"
 
+# How many trailing CareHistory rows to consult when deduping an append.
+# Duplicates only arise from Telegram retrying a delivery within minutes, so a
+# bounded tail is enough and stays cheap however large the log grows.
+HISTORY_DEDUPE_TAIL = 100
+
 
 def pending_actions(status):
     """The set of actions a composite Status string is pending.
@@ -33,6 +38,10 @@ def _compose_status(actions):
 
 def _is_pending(status, action):
     return action in pending_actions(status)
+
+
+def _history_key(plant, action, date):
+    return (str(plant).strip().lower(), str(action).strip().upper(), str(date).strip())
 
 
 def ensure_history_headers(worksheet):
@@ -74,6 +83,7 @@ class PlantDB:
             raise Exception(f"Worksheet '{WORKSHEET_NAME}' not found in '{SHEET_NAME}'")
         
         self.df = pd.DataFrame(self.worksheet.get_all_records())
+        self._reset_write_state()
         
         # CareHistory worksheet (create if missing, add headers if empty)
         try:
@@ -85,6 +95,48 @@ class PlantDB:
                 title=HISTORY_WORKSHEET, rows=1000, cols=4
             )
             self.history_ws.append_row(HISTORY_HEADERS)
+
+    def _reset_write_state(self):
+        """Dirty-cell tracking and the lazily-read history tail."""
+        self._dirty = set()
+        self._history_keys = None
+
+    def _set(self, idx, column, value):
+        """Change one cell and remember to write just that cell.
+
+        Every mutation goes through here so save() can write only what actually
+        changed. Rewriting the whole sheet meant two overlapping taps clobbered
+        each other, and because CareHistory appends land immediately while
+        Plants is written at save(), the loser left history saying the action
+        happened and Plants still saying it was pending."""
+        self.df.at[idx, column] = value
+        self._dirty.add((idx, column))
+
+    def _a1(self, idx, column):
+        """Sheet address of a DataFrame cell. Row 1 is the header, so the
+        first data row is 2; columns follow the sheet's own order."""
+        col = self.df.columns.get_loc(column) + 1
+        return gspread.utils.rowcol_to_a1(idx + 2, col)
+
+    def _history_tail_keys(self):
+        """(plant, action, date) for the tail of CareHistory, read once."""
+        if self._history_keys is not None:
+            return self._history_keys
+
+        keys = set()
+        try:
+            used = len(self.history_ws.col_values(1))
+            if used > 1:
+                start = max(2, used - HISTORY_DEDUPE_TAIL + 1)
+                for row in self.history_ws.get(f"A{start}:C{used}"):
+                    if len(row) >= 3:
+                        keys.add(_history_key(row[1], row[2], row[0]))
+        except Exception as e:
+            # A failed dedupe check must not block logging the action.
+            print(f"⚠️ Could not read history tail for dedupe: {e}")
+
+        self._history_keys = keys
+        return keys
 
     def get_inventory(self):
         """Returns the full plant inventory DataFrame."""
@@ -131,10 +183,22 @@ class PlantDB:
         return summary
 
     def log_action(self, plant_name, action, date=None, notes=""):
-        """Log a care action to history."""
+        """Log a care action to history, unless that exact action is already
+        recorded for that plant on that day.
+
+        Telegram retries any delivery that times out, and the handler is not
+        idempotent -- without this a retry writes the action twice."""
         if not date:
             date = clock.today()
+
+        key = _history_key(plant_name, action, date)
+        if key in self._history_tail_keys():
+            print(f"⏭️ {action} for {plant_name} already logged on {date}")
+            return False
+
         self.history_ws.append_row([date, plant_name, action, notes])
+        self._history_keys.add(key)
+        return True
 
     def _product_note(self, idx):
         """'Confirmed via <product>' for the plant's assigned fertilizer.
@@ -160,9 +224,9 @@ class PlantDB:
         idx = self.df[mask].index[0]
 
         if action == 'WATER':
-            self.df.at[idx, 'Last Watered'] = date
+            self._set(idx, 'Last Watered', date)
         elif action == 'FERTILIZE':
-            self.df.at[idx, 'Last Fertilized'] = date
+            self._set(idx, 'Last Fertilized', date)
             if not notes:
                 notes = self._product_note(idx)
 
@@ -183,9 +247,9 @@ class PlantDB:
             plant_name = row['Name']
 
             if action == 'WATER':
-                self.df.at[idx, 'Last Watered'] = date
+                self._set(idx, 'Last Watered', date)
             elif action == 'FERTILIZE':
-                self.df.at[idx, 'Last Fertilized'] = date
+                self._set(idx, 'Last Fertilized', date)
 
             self.log_action(plant_name, action, date=date, notes='Confirmed via Mark action complete')
             self._clear_pending(idx, action)
@@ -216,7 +280,7 @@ class PlantDB:
                 continue
 
             plant_name = row['Name']
-            self.df.at[idx, 'Last Fertilized'] = date
+            self._set(idx, 'Last Fertilized', date)
             self.log_action(plant_name, 'FERTILIZE', date=date,
                             notes=f'Confirmed via {product}')
             self._clear_pending(idx, 'FERTILIZE')
@@ -237,7 +301,7 @@ class PlantDB:
             return
         ordered = [a for a in current[len(PENDING_PREFIX):].split("_")
                    if a and a != action]
-        self.df.at[idx, 'Status'] = _compose_status(ordered)
+        self._set(idx, 'Status', _compose_status(ordered))
 
     def mark_all_done(self, date=None):
         """Confirm every plant's pending actions at once. Returns the number of plants updated."""
@@ -251,13 +315,13 @@ class PlantDB:
             actions = pending_actions(row['Status'])
 
             if 'WATER' in actions:
-                self.df.at[idx, 'Last Watered'] = date
+                self._set(idx, 'Last Watered', date)
             if 'FERTILIZE' in actions:
-                self.df.at[idx, 'Last Fertilized'] = date
+                self._set(idx, 'Last Fertilized', date)
             for action in actions:
                 self.log_action(plant_name, action, date=date, notes='Confirmed via Mark all done')
 
-            self.df.at[idx, 'Status'] = 'OK'
+            self._set(idx, 'Status', 'OK')
             updated += 1
 
         if updated:
@@ -286,11 +350,22 @@ class PlantDB:
                 else:
                     new_status = f"{PENDING_PREFIX}{action}"
 
-                self.df.loc[mask, 'Status'] = new_status
+                self._set(self.df[mask].index[0], 'Status', new_status)
         
         self.save()
 
     def save(self):
-        """Writes the DataFrame back to Google Sheets."""
-        self.worksheet.update([self.df.columns.values.tolist()] + self.df.values.tolist())
-        print("💾 Database saved.")
+        """Write only the cells that changed since this request started.
+
+        A full-sheet rewrite from a request-start snapshot is a lost update
+        waiting to happen: two taps on different plants would overwrite one
+        another even though their changes never overlapped."""
+        if not self._dirty:
+            return
+
+        updates = [{"range": self._a1(idx, column),
+                    "values": [[self.df.at[idx, column]]]}
+                   for idx, column in sorted(self._dirty, key=lambda c: (c[0], str(c[1])))]
+        self.worksheet.batch_update(updates)
+        self._dirty.clear()
+        print(f"💾 Saved {len(updates)} cell(s).")

@@ -7,12 +7,28 @@ class FakeWorksheet:
     def __init__(self):
         self.appended_rows = []
         self.updated = None
+        self.batch_updates = []
 
     def append_row(self, row):
         self.appended_rows.append(row)
 
-    def update(self, values):
+    def update(self, values, *a, **k):
         self.updated = values
+
+    # Writes are now per-cell; `updated` stays None so any test still asserting
+    # a full-sheet rewrite would fail loudly rather than silently pass.
+    def batch_update(self, data, **kwargs):
+        self.batch_updates.append(data)
+
+    # CareHistory reads used by the append-dedupe guard.
+    def col_values(self, n):
+        return ["Date"] + [str(r[n - 1]) for r in self.appended_rows]
+
+    def get(self, a1):
+        return [[str(c) for c in r] for r in self.appended_rows]
+
+    def row_values(self, n):
+        return ["Date", "Plant", "Action", "Notes"]
 
 
 def make_db(rows):
@@ -20,6 +36,7 @@ def make_db(rows):
     db.df = pd.DataFrame(rows)
     db.history_ws = FakeWorksheet()
     db.worksheet = FakeWorksheet()
+    db._reset_write_state()
     return db
 
 
@@ -92,7 +109,7 @@ def test_mark_action_done_returns_zero_and_skips_save_when_nothing_pending():
     updated = db.mark_action_done("WATER", date="2026-08-20")
 
     assert updated == 0
-    assert db.worksheet.updated is None
+    assert db.worksheet.batch_updates == []
 
 
 def test_mark_all_done_logs_every_pending_plant():
@@ -179,7 +196,7 @@ def test_mark_fertilizer_done_with_no_matches_writes_nothing():
     db = make_db(_fert_rows())
     assert db.mark_fertilizer_done("ACID", date="2026-09-19") == []
     assert db.history_ws.appended_rows == []
-    assert db.worksheet.updated is None
+    assert db.worksheet.batch_updates == []
 
 
 def test_mark_fertilizer_done_survives_a_sheet_without_the_column():
