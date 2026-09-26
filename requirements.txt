@@ -7,3 +7,4 @@ pytz
 python-dotenv
 pytest
 functions-framework
+tzdata

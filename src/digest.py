@@ -20,6 +20,7 @@ from src.callbacks import encode_task_button, encode_alldone, encode_action_done
 # one absurd plant name would otherwise take the entire digest down with it.
 MAX_CALLBACK_BYTES = 64
 from src.fertilizers import product_of, strength_of, icon_of
+from src import clock
 
 PRIORITY_MARKERS = {
     'HIGH': '🔴',
@@ -154,7 +155,7 @@ def _task_line(task, annotate_strength=False):
 
 
 def format_digest(tasks, summary):
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = clock.today()
     lines = [f"🌿 <b>Plant Care Tasks ({today})</b>"]
     if summary:
         # Free-form model output, regenerated every run -- one stray '<' would
@@ -186,7 +187,7 @@ def build_keyboard(tasks):
     Bulk fertilizing is per product code rather than one button for the action:
     the codes differ by dilution, so confirming the half-strength plants must
     not also claim the full-strength ones."""
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = clock.today()
     rows = []
 
     for action, members in _group_tasks(tasks):

@@ -4,6 +4,7 @@ from datetime import datetime
 import requests
 
 from src.config import LATITUDE, LONGITUDE
+from src import clock
 
 # Season labels, derived from daylight rather than a month table so the
 # thresholds stay correct for whatever latitude the garden is at.
@@ -98,7 +99,7 @@ def _today_index(daily, today):
     past/future split correct if the request window ever changes."""
     times = _series(daily, "time") or []
     if today is None:
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = clock.today()
     if today in times:
         return times.index(today)
     # Window doesn't contain today (stale cache, clock skew): fall back to the

@@ -13,6 +13,7 @@ from src.config import TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET
 from src.fertilizers import product_of
 from src.storage import PlantDB
 from src.telegram_bot import answer_callback_query, edit_message_reply_markup, edit_message_text, send_message
+from src import clock
 
 
 def telegram_webhook(request):
@@ -98,7 +99,7 @@ def _handle_task(callback_id, chat_id, message_id, message, parsed):
         answer_callback_query(callback_id, text=f"Couldn't find '{parsed['plant']}'", show_alert=True)
         return
 
-    today = datetime.now().strftime('%Y-%m-%d')
+    today = clock.today()
     done_row = [{"text": f"✓ {parsed['action'].title()} {parsed['plant']} — {today}", "callback_data": "noop"}]
     new_markup = _replace_task_row(message["reply_markup"], parsed["action"], parsed["plant"], done_row)
     edit_message_reply_markup(chat_id, message_id, new_markup)
@@ -109,7 +110,7 @@ def _handle_alldone(callback_id, chat_id, message_id, parsed):
     # mark_all_done() acts on whatever is pending *now*, which may have become
     # pending after this digest was sent. Applying a stale digest's date to it
     # would write wrong dates into CareHistory, so only today's digest is honoured.
-    if parsed["date"] != datetime.now().strftime('%Y-%m-%d'):
+    if parsed["date"] != clock.today():
         answer_callback_query(
             callback_id,
             text="This digest is from a previous day — reply isn't supported anymore, check today's message instead.",
@@ -127,7 +128,7 @@ def _handle_alldone(callback_id, chat_id, message_id, parsed):
 def _handle_donetype(callback_id, chat_id, message_id, message, parsed):
     # mark_action_done() acts on whatever is pending *now* for this action, which
     # may have changed since this digest was sent -- same staleness risk as alldone.
-    if parsed["date"] != datetime.now().strftime('%Y-%m-%d'):
+    if parsed["date"] != clock.today():
         answer_callback_query(
             callback_id,
             text="This digest is from a previous day — reply isn't supported anymore, check today's message instead.",
@@ -146,7 +147,7 @@ def _handle_donetype(callback_id, chat_id, message_id, message, parsed):
 def _handle_donefert(callback_id, chat_id, message_id, message, parsed):
     """Confirm one fertilizer product. Same staleness rule as donetype: the
     Sheet is only opened once today's date is confirmed."""
-    if parsed["date"] != datetime.now().strftime('%Y-%m-%d'):
+    if parsed["date"] != clock.today():
         answer_callback_query(
             callback_id,
             text="This digest is from a previous day — reply isn't supported anymore, check today's message instead.",

@@ -5,6 +5,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from src.config import SHEET_CREDENTIALS, SHEET_NAME, WORKSHEET_NAME
 from src.fertilizers import normalize, product_of
+from src import clock
 
 HISTORY_WORKSHEET = "CareHistory"
 HISTORY_HEADERS = ["Date", "Plant", "Action", "Notes"]
@@ -132,14 +133,14 @@ class PlantDB:
     def log_action(self, plant_name, action, date=None, notes=""):
         """Log a care action to history."""
         if not date:
-            date = datetime.now().strftime('%Y-%m-%d')
+            date = clock.today()
         self.history_ws.append_row([date, plant_name, action, notes])
 
     def log_task_action(self, plant_name, action, date=None, notes=""):
         """Log a specific care action for an exact plant name (case-insensitive).
         Returns True if the plant was found and updated, False otherwise."""
         if not date:
-            date = datetime.now().strftime('%Y-%m-%d')
+            date = clock.today()
 
         mask = self.df['Name'].str.lower() == plant_name.strip().lower()
         if not mask.any():
@@ -161,7 +162,7 @@ class PlantDB:
         """Confirm one specific action across every plant currently pending it.
         Returns the number of plants updated."""
         if not date:
-            date = datetime.now().strftime('%Y-%m-%d')
+            date = clock.today()
 
         mask_pending = self.df['Status'].apply(lambda s: _is_pending(s, action))
         updated = 0
@@ -188,7 +189,7 @@ class PlantDB:
         so the recorder can collapse exactly those keyboard rows rather than
         every FERTILIZE row on the message."""
         if not date:
-            date = datetime.now().strftime('%Y-%m-%d')
+            date = clock.today()
 
         if 'Fertilizer' not in self.df.columns:
             return []
@@ -228,7 +229,7 @@ class PlantDB:
     def mark_all_done(self, date=None):
         """Confirm every plant's pending actions at once. Returns the number of plants updated."""
         if not date:
-            date = datetime.now().strftime('%Y-%m-%d')
+            date = clock.today()
 
         mask_pending = self.df['Status'].apply(lambda s: bool(pending_actions(s)))
         updated = 0

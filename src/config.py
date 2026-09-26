@@ -16,5 +16,8 @@ PERENUAL_API_KEY = os.environ.get("PERENUAL_API_KEY")
 MODEL_ID = "gemini-2.5-flash" 
 LATITUDE = 34.05 
 LONGITUDE = -118.25
+# The garden's timezone. Every date the app stamps or compares is resolved
+# against this, never the (UTC) server clock -- see src/clock.py.
+TIMEZONE = os.environ.get("TIMEZONE", "America/Los_Angeles")
 SHEET_NAME = "ShakahariDB"
 WORKSHEET_NAME = "Plants"

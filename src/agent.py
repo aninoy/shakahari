@@ -10,6 +10,7 @@ from src.actions import CARE_ACTIONS
 from src.fertilizers import normalize, product_of
 from src.intervals import effective_interval
 from src.weather import derive_climate
+from src import clock
 
 SYSTEM_PROMPT = """You are an expert botanist and plant care advisor. You have deep knowledge of:
 - Tropical houseplants, succulents, cacti, herbs, and common garden plants
@@ -34,14 +35,11 @@ HISTORY_ACTIONS = ['MIST', 'ROTATE', 'MOVE', 'PRUNE', 'REPOT', 'CHECK']
 
 
 def days_since(date_str):
-    """Days since a YYYY-MM-DD string, or None if absent or unparseable."""
-    if not date_str or date_str == 'N/A':
-        return None
-    try:
-        past = datetime.strptime(str(date_str), '%Y-%m-%d')
-        return (datetime.now() - past).days
-    except ValueError:
-        return None
+    """Days since a YYYY-MM-DD string, or None if absent or unparseable.
+
+    Delegates to the garden clock so "how many days ago" uses the same day
+    boundary the digest and the Recorder do."""
+    return clock.days_since(date_str)
 
 
 def _is_due(interval, days):

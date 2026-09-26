@@ -544,3 +544,80 @@ def test_donefert_with_no_matching_plants_still_acknowledges(monkeypatch):
     recorder.telegram_webhook(request)
 
     assert answers, "the button must always be acknowledged"
+
+
+# --- the evening staleness false-positive ---------------------------------
+
+def _freeze(monkeypatch, utc):
+    """Pin the clock; the garden is Pacific, both runtimes are UTC."""
+    from src import clock
+    monkeypatch.setattr(clock, "_utcnow", lambda: utc)
+
+
+def test_a_digest_from_this_morning_is_accepted_when_tapped_this_evening(monkeypatch):
+    """The reported bug: tapping at 18:39 Pacific on the 25th was refused as
+    "from a previous day", because the server was already on the 26th in UTC."""
+    from datetime import timezone
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+    monkeypatch.setattr(recorder, "edit_message_reply_markup", lambda *a, **k: None)
+    answers = []
+    monkeypatch.setattr(
+        recorder, "answer_callback_query",
+        lambda cid, text="", show_alert=False: answers.append((cid, text, show_alert)),
+    )
+    # 01:39 UTC on the 26th == 18:39 Pacific on the 25th.
+    _freeze(monkeypatch, datetime(2026, 9, 26, 1, 39, tzinfo=timezone.utc))
+
+    request = FakeRequest(
+        _callback_update("donetype:WATER:2026-09-25",
+                         markup={"inline_keyboard": [
+                             [{"text": "x", "callback_data": "donetype:WATER:2026-09-25"}]]}),
+        secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    assert FakePlantDB.instances, "the Sheet was never opened -- still refused as stale"
+    assert FakePlantDB.instances[-1].donetype_calls == [("WATER", "2026-09-25")]
+    assert not any("previous day" in text for _, text, _ in answers)
+
+
+def test_a_genuinely_old_digest_is_still_refused(monkeypatch):
+    """The guard must keep working -- yesterday's digest must not write today's
+    date over whatever happens to be pending now."""
+    from datetime import timezone
+    monkeypatch.setattr(recorder, "TELEGRAM_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(recorder, "PlantDB", FakePlantDB)
+    monkeypatch.setattr(recorder, "edit_message_reply_markup", lambda *a, **k: None)
+    answers = []
+    monkeypatch.setattr(
+        recorder, "answer_callback_query",
+        lambda cid, text="", show_alert=False: answers.append((cid, text, show_alert)),
+    )
+    _freeze(monkeypatch, datetime(2026, 9, 26, 1, 39, tzinfo=timezone.utc))
+
+    request = FakeRequest(_callback_update("donetype:WATER:2026-09-24"), secret="test-secret")
+
+    recorder.telegram_webhook(request)
+
+    assert FakePlantDB.instances == []
+    assert "previous day" in answers[-1][1]
+
+
+def test_the_digest_and_the_recorder_stamp_the_same_day(monkeypatch):
+    """Whatever date build_keyboard bakes into a button, the guard must accept
+    it on the same garden day."""
+    from datetime import timezone
+    from src.digest import build_keyboard
+    _freeze(monkeypatch, datetime(2026, 9, 26, 1, 39, tzinfo=timezone.utc))
+
+    kb = build_keyboard([{"name": "Monstera", "action": "WATER", "priority": "HIGH",
+                          "days_since": 12, "threshold": 10, "base": 10,
+                          "adjustments": [], "fertilizer": None}])
+    dated = [b["callback_data"] for row in kb["inline_keyboard"] for b in row
+             if b["callback_data"].startswith(("donetype:", "alldone:", "donefert:"))]
+
+    from src import clock
+    assert dated, "no dated buttons produced"
+    for payload in dated:
+        assert payload.endswith(clock.today())
