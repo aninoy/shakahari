@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from src import telegram_bot as tb
 
 
@@ -16,7 +18,7 @@ class FakeResponse:
 def test_send_message_posts_plain_text(monkeypatch):
     captured = {}
 
-    def fake_post(url, json):
+    def fake_post(url, json, **kwargs):
         captured["url"] = url
         captured["json"] = json
         return FakeResponse()
@@ -33,7 +35,7 @@ def test_send_message_posts_plain_text(monkeypatch):
 def test_send_message_attaches_keyboard_to_last_chunk_only(monkeypatch):
     calls = []
 
-    def fake_post(url, json):
+    def fake_post(url, json, **kwargs):
         calls.append(json)
         return FakeResponse()
 
@@ -51,7 +53,7 @@ def test_send_message_attaches_keyboard_to_last_chunk_only(monkeypatch):
 
 
 def test_send_message_returns_true_when_every_chunk_sends(monkeypatch):
-    monkeypatch.setattr(tb.requests, "post", lambda url, json: FakeResponse())
+    monkeypatch.setattr(tb.requests, "post", lambda url, json=None, **kwargs: FakeResponse())
 
     assert tb.send_message("hello") is True
 
@@ -61,7 +63,7 @@ def test_send_message_returns_false_when_a_chunk_fails(monkeypatch):
     can fail to send. The caller must be able to tell instead of assuming success."""
     monkeypatch.setattr(
         tb.requests, "post",
-        lambda url, json: FakeResponse(status_code=400, text='{"description":"BUTTON_DATA_INVALID"}'),
+        lambda url, json=None, **kwargs: FakeResponse(status_code=400, text='{"description":"BUTTON_DATA_INVALID"}'),
     )
 
     keyboard = {"inline_keyboard": [[{"text": "Watered", "callback_data": "t:WATER:Fern"}]]}
@@ -71,7 +73,7 @@ def test_send_message_returns_false_when_a_chunk_fails(monkeypatch):
 def test_send_message_returns_false_when_only_a_later_chunk_fails(monkeypatch):
     """Failure is tracked per chunk -- a successful first chunk must not mask it."""
     responses = [FakeResponse(), FakeResponse(status_code=400, text="Bad Request")]
-    monkeypatch.setattr(tb.requests, "post", lambda url, json: responses.pop(0))
+    monkeypatch.setattr(tb.requests, "post", lambda url, json=None, **kwargs: responses.pop(0))
 
     result = tb.send_message(("a" * 3990) + "\n" + ("b" * 3990))
 
@@ -82,7 +84,7 @@ def test_send_message_returns_false_when_only_a_later_chunk_fails(monkeypatch):
 def test_answer_callback_query_posts_expected_payload(monkeypatch):
     captured = {}
 
-    def fake_post(url, json):
+    def fake_post(url, json, **kwargs):
         captured["url"] = url
         captured["json"] = json
         return FakeResponse()
@@ -98,7 +100,7 @@ def test_answer_callback_query_posts_expected_payload(monkeypatch):
 def test_edit_message_reply_markup_posts_expected_payload(monkeypatch):
     captured = {}
 
-    def fake_post(url, json):
+    def fake_post(url, json, **kwargs):
         captured["url"] = url
         captured["json"] = json
         return FakeResponse()
@@ -117,7 +119,7 @@ def test_edit_message_reply_markup_posts_expected_payload(monkeypatch):
 def test_edit_message_text_posts_expected_payload(monkeypatch):
     captured = {}
 
-    def fake_post(url, json):
+    def fake_post(url, json, **kwargs):
         captured["url"] = url
         captured["json"] = json
         return FakeResponse()
@@ -129,3 +131,50 @@ def test_edit_message_text_posts_expected_payload(monkeypatch):
     assert captured["url"] == f"{tb.BASE_URL}/editMessageText"
     assert captured["json"]["text"] == "Logged!"
     assert "reply_markup" not in captured["json"]
+
+
+# --- outbound calls must be bounded ----------------------------------------
+
+def _capture(monkeypatch):
+    calls = []
+
+    def fake_post(url, json=None, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return FakeResponse()
+
+    monkeypatch.setattr(tb.requests, "post", fake_post)
+    return calls
+
+
+def test_send_message_bounds_how_long_it_will_wait(monkeypatch):
+    """Without a timeout a slow Telegram API hangs the Cloud Function until
+    Cloud Run kills it at 60s. Telegram then retries the update, and the
+    handler is not idempotent -- so the same care action gets logged twice."""
+    calls = _capture(monkeypatch)
+
+    tb.send_message("hello")
+
+    assert calls and calls[0].get("timeout"), "send_message has no timeout"
+
+
+@pytest.mark.parametrize("invoke", [
+    lambda: tb.answer_callback_query("cbq-1", "done"),
+    lambda: tb.edit_message_reply_markup(1, 2, {"inline_keyboard": []}),
+    lambda: tb.edit_message_text(1, 2, "text"),
+])
+def test_every_telegram_call_is_bounded(monkeypatch, invoke):
+    calls = _capture(monkeypatch)
+
+    invoke()
+
+    assert calls, "no request was made"
+    for c in calls:
+        assert c.get("timeout"), f"{c['url']} has no timeout"
+
+
+def test_the_timeout_leaves_room_inside_cloud_runs_60s_request_limit(monkeypatch):
+    calls = _capture(monkeypatch)
+
+    tb.send_message("hello")
+
+    assert calls[0]["timeout"] <= 15

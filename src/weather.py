@@ -17,6 +17,8 @@ DORMANT = "DORMANT"
 GROWING_MIN_DAYLIGHT_HOURS = 11.5
 DORMANT_MAX_DAYLIGHT_HOURS = 10.5
 
+FORECAST_TIMEOUT_SECONDS = 15
+
 PAST_DAYS = 3
 FORECAST_DAYS = 3
 
@@ -52,7 +54,7 @@ def get_forecast():
         f"&past_days={PAST_DAYS}&forecast_days={FORECAST_DAYS}&timezone=auto"
     )
     try:
-        response = requests.get(url).json()
+        response = requests.get(url, timeout=FORECAST_TIMEOUT_SECONDS).json()
         return response.get('daily')
     except Exception as e:
         print(f"⚠️ Weather API Error: {e}")

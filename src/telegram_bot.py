@@ -4,6 +4,12 @@ from src.config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
+# The Recorder runs in a Cloud Function with a 60s request limit. An unbounded
+# call to a slow Telegram API hangs until Cloud Run kills the container, at
+# which point Telegram retries the update -- and the handler is not idempotent,
+# so the same care action lands in CareHistory twice. Fail fast instead.
+REQUEST_TIMEOUT_SECONDS = 10
+
 
 def send_message(message, reply_markup=None):
     """Sends a message to your phone. Chunks messages over 4000 chars.
@@ -33,7 +39,7 @@ def send_message(message, reply_markup=None):
         if reply_markup and i == len(chunks) - 1:
             payload["reply_markup"] = json.dumps(reply_markup)
         try:
-            response = requests.post(url, json=payload)
+            response = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
             response.raise_for_status()
         except Exception as e:
             all_sent = False
@@ -49,7 +55,7 @@ def answer_callback_query(callback_query_id, text="", show_alert=False):
     url = f"{BASE_URL}/answerCallbackQuery"
     payload = {"callback_query_id": callback_query_id, "text": text, "show_alert": show_alert}
     try:
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
         response.raise_for_status()
     except Exception as e:
         print(f"⚠️ Telegram Callback Answer Error: {e}")
@@ -64,7 +70,7 @@ def edit_message_reply_markup(chat_id, message_id, reply_markup):
         "reply_markup": json.dumps(reply_markup),
     }
     try:
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
         response.raise_for_status()
     except Exception as e:
         print(f"⚠️ Telegram Edit Markup Error: {e}")
@@ -77,7 +83,7 @@ def edit_message_text(chat_id, message_id, text, reply_markup=None):
     if reply_markup is not None:
         payload["reply_markup"] = json.dumps(reply_markup)
     try:
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
         response.raise_for_status()
     except Exception as e:
         print(f"⚠️ Telegram Edit Text Error: {e}")
