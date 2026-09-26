@@ -20,4 +20,7 @@ LONGITUDE = -118.25
 # against this, never the (UTC) server clock -- see src/clock.py.
 TIMEZONE = os.environ.get("TIMEZONE", "America/Los_Angeles")
 SHEET_NAME = "ShakahariDB"
+# Opening by id is a direct fetch; opening by name is a Drive title search that
+# costs over a second on every request. Falls back to the name if unset/stale.
+SHEET_ID = os.environ.get("SHEET_ID", "1kr53TdGUbUe4P8lT4vbK5RIx-Ita9vEyElrz7WkU7P8")
 WORKSHEET_NAME = "Plants"

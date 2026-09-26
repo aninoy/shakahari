@@ -191,3 +191,59 @@ def test_the_plants_sheet_is_still_updated_even_when_the_log_is_deduped():
 
     assert db.log_task_action("Monstera", "WATER", date="2026-09-26") is True
     assert _cells(db.worksheet)["D2"] == "PENDING_ROTATE"
+
+
+# --- opening the spreadsheet ----------------------------------------------
+
+class FakeClient:
+    def __init__(self, fail_by_key=False):
+        self.by_key = []
+        self.by_name = []
+        self._fail = fail_by_key
+
+    def open_by_key(self, key):
+        self.by_key.append(key)
+        if self._fail:
+            raise RuntimeError("no such key")
+        return f"sheet:{key}"
+
+    def open(self, name):
+        self.by_name.append(name)
+        return f"sheet:{name}"
+
+
+def test_the_spreadsheet_is_opened_by_id_not_searched_for_by_name(monkeypatch):
+    """open(name) is a Drive title search and costs ~1.3s on every single tap;
+    with writes now serialised that latency multiplies across a burst."""
+    from src import storage
+    monkeypatch.setattr(storage, "SHEET_ID", "abc123")
+    client = FakeClient()
+
+    result = PlantDB._open_spreadsheet(client)
+
+    assert client.by_key == ["abc123"]
+    assert client.by_name == []
+    assert result == "sheet:abc123"
+
+
+def test_it_falls_back_to_searching_by_name_if_the_id_is_wrong(monkeypatch):
+    from src import storage
+    monkeypatch.setattr(storage, "SHEET_ID", "stale-id")
+    client = FakeClient(fail_by_key=True)
+
+    result = PlantDB._open_spreadsheet(client)
+
+    assert client.by_key == ["stale-id"]
+    assert client.by_name == [storage.SHEET_NAME]
+    assert result == f"sheet:{storage.SHEET_NAME}"
+
+
+def test_no_id_configured_still_works(monkeypatch):
+    from src import storage
+    monkeypatch.setattr(storage, "SHEET_ID", "")
+    client = FakeClient()
+
+    PlantDB._open_spreadsheet(client)
+
+    assert client.by_key == []
+    assert client.by_name == [storage.SHEET_NAME]

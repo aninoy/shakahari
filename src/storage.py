@@ -5,7 +5,7 @@ from datetime import datetime
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from src.config import SHEET_CREDENTIALS, SHEET_NAME, WORKSHEET_NAME
+from src.config import SHEET_CREDENTIALS, SHEET_NAME, SHEET_ID, WORKSHEET_NAME
 from src.fertilizers import normalize, product_of
 from src import clock
 
@@ -91,10 +91,7 @@ class PlantDB:
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
-        try:
-            self.spreadsheet = client.open(SHEET_NAME)
-        except gspread.SpreadsheetNotFound:
-            raise Exception(f"Spreadsheet '{SHEET_NAME}' not found. Did you share it with the service account?")
+        self.spreadsheet = self._open_spreadsheet(client)
         
         # Main Plants worksheet
         try:
@@ -115,6 +112,20 @@ class PlantDB:
                 title=HISTORY_WORKSHEET, rows=1000, cols=4
             )
             self.history_ws.append_row(HISTORY_HEADERS)
+
+    @staticmethod
+    def _open_spreadsheet(client):
+        """Prefer the id (a direct fetch) over the name (a Drive search)."""
+        if SHEET_ID:
+            try:
+                return client.open_by_key(SHEET_ID)
+            except Exception as e:
+                print(f"⚠️ SHEET_ID lookup failed ({e}); falling back to name search")
+        try:
+            return client.open(SHEET_NAME)
+        except gspread.SpreadsheetNotFound:
+            raise Exception(
+                f"Spreadsheet '{SHEET_NAME}' not found. Did you share it with the service account?")
 
     def _reset_write_state(self):
         """Dirty-cell tracking and the lazily-read history tail."""
