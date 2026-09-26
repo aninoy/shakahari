@@ -281,6 +281,31 @@ then clamped to a per-action floor and ceiling on top of that.
 recent N rows — a flat row window would drop `PRUNE` and `REPOT` as soon as a
 plant accrued a few waterings, making them permanently unreachable.
 
+### How writes are kept safe
+
+The Recorder serves one person tapping buttons, but Telegram can deliver up to
+40 updates concurrently, so overlapping taps are real. Three things keep them
+from losing data:
+
+- **Only changed cells are written.** A tap updates the two or three cells it
+  actually touched, not all 190. Taps on different plants no longer overlap at
+  all — which is the usual case when working down an action group.
+- **The read-modify-write window is serialised.** The function is pinned to a
+  single instance (`--max-instances=1`) that accepts several requests at once
+  (`--concurrency=8`) and queues them on an in-process lock. A concurrency of 1
+  would make Cloud Run reject bursts with HTTP 429; this way they wait instead.
+- **History appends are idempotent.** Telegram retries any delivery that times
+  out, so the same `(plant, action, date)` is logged at most once.
+
+This matters because `CareHistory` is appended immediately while `Plants` is
+written at the end: a lost update used to leave history saying an action
+happened and `Plants` still saying it was pending, so the bot re-recommended it
+the next day.
+
+The Recorder is also deliberately lightweight — `main.py` defers the Advisor's
+imports so a webhook request never loads the Gemini SDK. It used to, and the
+container was OOM-killed mid-request at 256 MB, silently dropping every write.
+
 ### Previewing without sending
 
 ```bash
