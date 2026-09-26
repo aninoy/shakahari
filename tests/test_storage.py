@@ -341,3 +341,66 @@ def test_existing_headers_are_left_alone():
     ensure_history_headers(ws)
 
     assert ws.appended_rows == []
+
+
+# --- per-plant fertilize taps record which product went on ----------------
+
+def _fert_plant(fertilizer="CITRUS", status="PENDING_FERTILIZE"):
+    return make_db([{"Name": "Avocado", "Last Watered": "", "Last Fertilized": "",
+                     "Status": status, "Fertilizer": fertilizer}])
+
+
+def test_a_per_plant_fertilize_tap_records_the_product():
+    """Which bottle went on the plant is the thing most worth logging, and the
+    per-plant path was the one dropping it -- the bulk path already records it."""
+    db = _fert_plant()
+
+    db.log_task_action("Avocado", "FERTILIZE", date="2026-09-26")
+
+    notes = db.history_ws.appended_rows[0][3]
+    assert "Citrus-tone" in notes
+
+
+def test_the_product_note_matches_what_the_bulk_button_writes():
+    """Both paths describe the same real-world act, so the history should read
+    the same whichever button was tapped."""
+    per_plant = _fert_plant()
+    per_plant.log_task_action("Avocado", "FERTILIZE", date="2026-09-26")
+
+    bulk = _fert_plant()
+    bulk.mark_fertilizer_done("CITRUS", date="2026-09-26")
+
+    assert per_plant.history_ws.appended_rows[0][3] == bulk.history_ws.appended_rows[0][3]
+
+
+def test_an_unmapped_plant_logs_without_inventing_a_product():
+    db = _fert_plant(fertilizer="")
+
+    db.log_task_action("Avocado", "FERTILIZE", date="2026-09-26")
+
+    assert db.history_ws.appended_rows[0][3] == ""
+
+
+def test_an_explicit_note_is_never_overridden():
+    db = _fert_plant()
+
+    db.log_task_action("Avocado", "FERTILIZE", date="2026-09-26", notes="half strength, by hand")
+
+    assert db.history_ws.appended_rows[0][3] == "half strength, by hand"
+
+
+def test_watering_is_not_annotated_with_a_fertilizer():
+    db = make_db([{"Name": "Avocado", "Last Watered": "", "Last Fertilized": "",
+                   "Status": "PENDING_WATER", "Fertilizer": "CITRUS"}])
+
+    db.log_task_action("Avocado", "WATER", date="2026-09-26")
+
+    assert db.history_ws.appended_rows[0][3] == ""
+
+
+def test_a_sheet_without_the_fertilizer_column_still_logs():
+    db = make_db([{"Name": "Avocado", "Last Watered": "", "Last Fertilized": "",
+                   "Status": "PENDING_FERTILIZE"}])
+
+    assert db.log_task_action("Avocado", "FERTILIZE", date="2026-09-26") is True
+    assert db.history_ws.appended_rows[0][3] == ""

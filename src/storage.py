@@ -136,6 +136,17 @@ class PlantDB:
             date = clock.today()
         self.history_ws.append_row([date, plant_name, action, notes])
 
+    def _product_note(self, idx):
+        """'Confirmed via <product>' for the plant's assigned fertilizer.
+
+        Which bottle went on the plant is the point of a feeding log, so a
+        per-plant tap records it the same way the per-product bulk button does.
+        Blank when the plant has no product assigned -- never guess one."""
+        if 'Fertilizer' not in self.df.columns:
+            return ""
+        product = product_of(normalize(self.df.at[idx, 'Fertilizer']))
+        return f'Confirmed via {product}' if product else ""
+
     def log_task_action(self, plant_name, action, date=None, notes=""):
         """Log a specific care action for an exact plant name (case-insensitive).
         Returns True if the plant was found and updated, False otherwise."""
@@ -152,6 +163,8 @@ class PlantDB:
             self.df.at[idx, 'Last Watered'] = date
         elif action == 'FERTILIZE':
             self.df.at[idx, 'Last Fertilized'] = date
+            if not notes:
+                notes = self._product_note(idx)
 
         self.log_action(plant_name, action, date=date, notes=notes)
         self._clear_pending(idx, action)
