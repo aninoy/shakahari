@@ -1,4 +1,6 @@
 import json
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 import pandas as pd
 import gspread
@@ -11,6 +13,24 @@ HISTORY_WORKSHEET = "CareHistory"
 HISTORY_HEADERS = ["Date", "Plant", "Action", "Notes"]
 
 PENDING_PREFIX = "PENDING_"
+
+# Serialises the read-modify-write window within one container.
+#
+# Targeted cell writes keep taps on different plants from colliding, but two
+# taps on the SAME plant still contend for its Status cell: each reads the same
+# snapshot, clears a different action, and the last write wins. The Recorder is
+# pinned to a single instance so this lock covers every concurrent request;
+# that instance accepts several at once (a concurrency of 1 makes Cloud Run
+# reject bursts with 429) and they queue here instead.
+_write_lock = threading.RLock()
+
+
+@contextmanager
+def exclusive():
+    """Hold the write lock for a whole read-modify-write cycle."""
+    with _write_lock:
+        yield
+
 
 # How many trailing CareHistory rows to consult when deduping an append.
 # Duplicates only arise from Telegram retrying a delivery within minutes, so a

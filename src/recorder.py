@@ -11,7 +11,7 @@ from src.callbacks import (
 )
 from src.config import TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET
 from src.fertilizers import product_of
-from src.storage import PlantDB
+from src.storage import PlantDB, exclusive
 from src.telegram_bot import answer_callback_query, edit_message_reply_markup, edit_message_text, send_message
 from src import clock
 
@@ -37,9 +37,11 @@ def telegram_webhook(request):
             return ("OK", 200)
 
         if "callback_query" in update:
-            _handle_callback(update["callback_query"])
+            with exclusive():
+                _handle_callback(update["callback_query"])
         elif "message" in update and update["message"].get("text", "").strip() == "/log":
-            _handle_log_command(update["message"])
+            with exclusive():
+                _handle_log_command(update["message"])
     except Exception as e:
         print(f"⚠️ Recorder: failed to process update: {e}")
 
